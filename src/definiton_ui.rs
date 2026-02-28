@@ -23,29 +23,26 @@ pub trait DropdownableEnum {
 impl DropdownableEnum for GeneratorOption {
     fn type_index(&self) -> i32 {
         match self {
-            GeneratorOption::None => 0,
-            GeneratorOption::SolidColor(_) => 1,
+            GeneratorOption::SolidColor(_) => 0,
         }
     }
 
     fn default_for_type_index(type_index: i32) -> Self {
         match type_index {
-            0 => GeneratorOption::None,
-            1 => GeneratorOption::SolidColor(SolidColorGenerator { color: Color::new(1.0, 0.0, 0.0, 1.0) }),
+            0 => GeneratorOption::SolidColor(SolidColorGenerator { color: Color::new(1.0, 0.0, 0.0, 1.0) }),
             _ => panic!("Invalid type index for GeneratorOption: {}", type_index),
         }
     }
 
     fn name_for_type_index(type_index: i32) -> &'static str {
         match type_index {
-            0 => "None",
-            1 => "Solid Color",
+            0 => "Solid Color",
             _ => "Unknown",
         }
     }
 
     fn option_count() -> i32 {
-        2
+        1
     }
 }
 
@@ -105,8 +102,6 @@ pub fn show_dropdown<T: DropdownableEnum>(ui: &mut egui::Ui, value: &mut T, labe
 
 pub fn generate_ui_for_generator_option(generator: &mut definition::GeneratorOption, ui: &mut egui::Ui) {
     match generator {
-        definition::GeneratorOption::None => {
-        }
         definition::GeneratorOption::SolidColor(solid_color_gen) => {
             ui.horizontal(|ui| {
                 ui.label("Color:");

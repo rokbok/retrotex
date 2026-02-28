@@ -1,6 +1,9 @@
 use std::{fmt::Display, hash::{Hash, Hasher}};
 
+use glam::{Vec3, Vec3A, Vec4};
 use serde::{Deserialize, Serialize};
+
+use crate::IMG_SIZE;
 
 pub const DEFAULT_NAME: &str = "unnamed";
 
@@ -43,13 +46,20 @@ pub struct SolidColorGenerator {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 pub enum GeneratorOption {
-    None,
     SolidColor(SolidColorGenerator),
+}
+impl GeneratorOption {
+    fn generate(&self, x: usize, y: usize) -> Vec4 {
+        match self {
+            GeneratorOption::SolidColor(opts) => Vec4::from(opts.color.v),
+        }
+    }
 }
 
 impl Default for GeneratorOption {
     fn default() -> Self {
-        Self::None
+        let opts = SolidColorGenerator { color: Color::new(1.0, 0.0, 0.0, 1.0) };
+        Self::SolidColor(opts)
     }
 }
 
@@ -63,6 +73,14 @@ pub enum BlendMode {
 impl BlendMode {
     pub fn all() -> &'static [BlendMode] {
         &[BlendMode::Normal, BlendMode::Additive, BlendMode::Multiply]
+    }
+    
+    fn apply(&self, bot: Vec3, top: Vec4) -> Vec3 {
+        match self {
+            BlendMode::Normal => top.truncate() * top.w + bot * (1.0 - top.w),
+            BlendMode::Additive => bot + top.truncate() * top.w,
+            BlendMode::Multiply => bot * (top.truncate() * top.w + Vec3::splat(1.0 - top.w)),
+        }
     }
 }
 
@@ -82,13 +100,19 @@ pub struct TexturePass {
     pub blend_mode: BlendMode,
     pub generator: GeneratorOption,
 }
+impl TexturePass {
+    fn apply(&self, dest: Vec3, x: usize, y: usize) -> Vec3 {
+        let src = self.generator.generate(x, y);
+        self.blend_mode.apply(dest, src)
+    }
+}
 
 impl Default for TexturePass {
     fn default() -> Self {
         Self {
             name: None,
             blend_mode: BlendMode::Normal,
-            generator: GeneratorOption::None,
+            generator: GeneratorOption::default(),
         }
     }
 }
@@ -99,6 +123,15 @@ pub struct TextureDefinition {
     #[serde(skip)] // This will be the filename
     pub name: String,
     pub passes: Vec<TexturePass>,
+}
+impl TextureDefinition {
+    pub fn generate_pixel(&self, x: usize, y: usize) -> Vec3 {
+        let mut ret = Vec3::new(1.0, 0.0, 0.0);
+        for pass in &self.passes{
+            ret = pass.apply(ret, x, y);
+        }
+        ret
+    }
 }
 
 impl Default for TextureDefinition {
