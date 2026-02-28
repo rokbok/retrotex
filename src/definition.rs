@@ -1,9 +1,10 @@
 use std::{fmt::Display, hash::{Hash, Hasher}};
 
-use glam::{Vec3, Vec3A, Vec4};
+use glam::{Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 
-use crate::IMG_SIZE;
+#[allow(unused_imports)]
+use log::{debug, error, log_enabled, info, warn, trace};
 
 pub const DEFAULT_NAME: &str = "unnamed";
 
@@ -49,7 +50,7 @@ pub enum GeneratorOption {
     SolidColor(SolidColorGenerator),
 }
 impl GeneratorOption {
-    fn generate(&self, x: usize, y: usize) -> Vec4 {
+    fn generate(&self, x: i32, y: i32) -> Vec4 {
         match self {
             GeneratorOption::SolidColor(opts) => Vec4::from(opts.color.v),
         }
@@ -95,13 +96,44 @@ impl Display for BlendMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+pub struct Rect {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+impl Rect {
+    pub fn new(x: i32, y: i32, w: i32, h: i32) -> Self {
+        Self { x, y, w, h }
+    }
+    pub fn contains(&self, px: i32, py: i32) -> bool {
+        px >= self.x && px < self.x + self.w && py >= self.y && py < self.y + self.h
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct TexturePass {
     pub name: Option<String>,
     pub blend_mode: BlendMode,
+    pub rect: Option<Rect>,
     pub generator: GeneratorOption,
 }
 impl TexturePass {
-    fn apply(&self, dest: Vec3, x: usize, y: usize) -> Vec3 {
+    fn apply(&self, dest: Vec3, x: i32, y: i32) -> Vec3 {
+        let inside_rect = match &self.rect {
+            Some(rect) => {
+                if (x == 0 && y == 0) || (x == 255 && y == 255) {
+                    info!("Checking rect for pass '{}': rect=({}, {}, {}, {}), point=({}, {}): {}", self.name.as_deref().unwrap_or(""), rect.x, rect.y, rect.w, rect.h, x, y, rect.contains(x, y));
+                }
+                rect.contains(x, y)
+            },
+            None => true,
+        };
+        if !inside_rect{
+            return dest;
+        }
+
         let src = self.generator.generate(x, y);
         self.blend_mode.apply(dest, src)
     }
@@ -112,6 +144,7 @@ impl Default for TexturePass {
         Self {
             name: None,
             blend_mode: BlendMode::Normal,
+            rect: None,
             generator: GeneratorOption::default(),
         }
     }
@@ -125,7 +158,7 @@ pub struct TextureDefinition {
     pub passes: Vec<TexturePass>,
 }
 impl TextureDefinition {
-    pub fn generate_pixel(&self, x: usize, y: usize) -> Vec3 {
+    pub fn generate_pixel(&self, x: i32, y: i32) -> Vec3 {
         let mut ret = Vec3::new(1.0, 0.0, 0.0);
         for pass in &self.passes{
             ret = pass.apply(ret, x, y);
@@ -141,6 +174,7 @@ impl Default for TextureDefinition {
             passes: vec![ TexturePass {
                 name: None,
                 blend_mode: BlendMode::Normal,
+                rect: None,
                 generator: GeneratorOption::SolidColor(SolidColorGenerator { color: Color::new(0.1, 0.1, 0.1, 1.0) })
             }],
         }

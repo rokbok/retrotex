@@ -17,7 +17,7 @@ pub fn save(def: &TextureDefinition) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
     }
-    let json_content = serde_json::to_string_pretty(def).map_err(|e| format!("Failed to serialize to JSON: {}", e))?;
+    let json_content = serde_json::to_string(def).map_err(|e| format!("Failed to serialize to JSON: {}", e))?;
     std::fs::write(path, json_content).map_err(|e| format!("Failed to write file: {}", e))?;
     Ok(())
 }

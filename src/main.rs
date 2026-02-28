@@ -12,7 +12,7 @@ pub mod definiton_ui;
 pub mod files;
 pub mod util;
 
-pub const IMG_SIZE: usize = 256;
+pub const IMG_SIZE: i32 = 256;
 
 const PREVIEW_TEX_OPTIONS: egui::TextureOptions = egui::TextureOptions {
     magnification: egui::TextureFilter::Nearest,
@@ -21,8 +21,8 @@ const PREVIEW_TEX_OPTIONS: egui::TextureOptions = egui::TextureOptions {
     mipmap_mode: None,
 };
 
-pub fn idx(x: usize, y: usize) -> usize {
-    y * IMG_SIZE + x
+pub fn idx(x: i32, y: i32) -> usize {
+    (y * IMG_SIZE + x) as usize
 }
 
 struct ExampleApp {
@@ -62,11 +62,11 @@ impl ExampleApp {
             return;
 
         }
-        let mut img = ColorImage::filled([IMG_SIZE, IMG_SIZE], Color32::BLACK);
+        let mut img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::BLACK);
         for y in 0..IMG_SIZE {
             for x in 0..IMG_SIZE {
                 let c = self.def.generate_pixel(x, y);
-                img.pixels[idx(x, y)] = Color32::from_rgba_premultiplied(
+                img.pixels[idx(x, y)] = Color32::from_rgba_unmultiplied(
                     (c.x * 255.0).clamp(0.0, 255.0) as u8,
                     (c.y * 255.0).clamp(0.0, 255.0) as u8,
                     (c.z * 255.0).clamp(0.0, 255.0) as u8,

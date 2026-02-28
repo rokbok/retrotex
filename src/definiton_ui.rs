@@ -2,7 +2,9 @@ use std::hash::{DefaultHasher, Hasher};
 
 use egui::Button;
 
-use crate::definition::{self, Color, GeneratorOption, SolidColorGenerator, TextureDefinition, TexturePass};
+use crate::{IMG_SIZE, definition::{self, Color, GeneratorOption, SolidColorGenerator, TextureDefinition, TexturePass}};
+
+pub enum PassOperation { Remove(usize) }
 
 fn add_full_width<T: egui::Widget>(ui: &mut egui::Ui, widget: T) -> egui::Response {
     let available_width = ui.available_width();
@@ -114,6 +116,7 @@ pub fn generate_ui_for_generator_option(generator: &mut definition::GeneratorOpt
 pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut egui::Ui) {
     ui.heading(&def.name);
 
+    let mut pass_op = Option::<PassOperation>::None;
     for (pass_idx, pass) in def.passes.iter_mut().enumerate() {
         ui.group(| ui | {
             ui.horizontal(| ui | {
@@ -131,7 +134,7 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                         None => pass.name = Some(tmp_str.clone()),
                     }
                 }
-                if ui.button("X").clicked() {
+                if ui.button("Reset").clicked() {
                     pass.name = None;
                 }
             });
@@ -139,8 +142,54 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
             show_dropdown(ui, &mut pass.generator, "Generator", pass_idx);
             generate_ui_for_generator_option(&mut pass.generator, ui);
             ui.separator();
-            show_dropdown(ui, &mut pass.blend_mode, "Blend Mode", pass_idx);
+            ui.horizontal(| ui | {
+                ui.label("Blend:");
+                show_dropdown(ui, &mut pass.blend_mode, "Blend Mode", pass_idx);
+            });
+
+            let mut use_rect = pass.rect.is_some();
+            if ui.checkbox(&mut use_rect, "Use Rect").changed() {
+                if use_rect {
+                    pass.rect = Some(definition::Rect::new(IMG_SIZE / 4, IMG_SIZE / 4, IMG_SIZE / 2, IMG_SIZE / 2));
+                } else {
+                    pass.rect = None;
+                }
+            }
+            ui.horizontal(| ui | {
+                if let Some(rect) = &mut pass.rect {
+                    ui.label("X:");
+                    ui.add(egui::DragValue::new(&mut rect.x).range(0..=(IMG_SIZE - 1)));
+                    ui.label("Y:");
+                    ui.add(egui::DragValue::new(&mut rect.y).range(0..=(IMG_SIZE - 1)));
+                    ui.label("W:");
+                    ui.add(egui::DragValue::new(&mut rect.w).range(1..=IMG_SIZE));
+                    ui.label("H:");
+                    ui.add(egui::DragValue::new(&mut rect.h).range(1..=IMG_SIZE));
+
+                    let mut r = rect.x + rect.w;
+                    ui.label("R:");
+                    if ui.add(egui::DragValue::new(&mut r).range(1..=(IMG_SIZE))).changed() {
+                        rect.x = r - rect.w;
+                    }
+                    let mut b = rect.y + rect.h;
+                    ui.label("B:");
+                    if ui.add(egui::DragValue::new(&mut b).range(1..=(IMG_SIZE))).changed() {
+                        rect.y = b - rect.h;
+                    }
+                }
+            });
+            if add_full_width(ui, Button::new("Remove")).clicked() {
+                pass_op = Some(PassOperation::Remove(pass_idx));
+            }
         });
+    }
+
+    if let Some(op) = pass_op {
+        match op {
+            PassOperation::Remove(idx) => {
+                def.passes.remove(idx);
+            }
+        }
     }
 
 
