@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::definition::{self, TextureDefinition};
 
 const FILE_LOCATIONS: &str = "textures";
+const UNDO_LIMIT: usize = 1000;
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
@@ -10,6 +11,7 @@ use log::{debug, error, log_enabled, info, warn, trace};
 pub struct LoadSaveUndo {
     loaded: Option<String>,
     undo_stack: Vec<String>,
+    redo_index: usize,
 }
 
 impl LoadSaveUndo {
@@ -17,6 +19,7 @@ impl LoadSaveUndo {
         Self {
             loaded: None,
             undo_stack: Vec::new(),
+            redo_index: 0,
         }
     }
 
@@ -28,6 +31,7 @@ impl LoadSaveUndo {
         self.loaded = Some(name.to_string());
         self.undo_stack.clear();
         self.undo_stack.push(file_content);
+        self.redo_index = 1;
         Ok(ret)
     }
 
@@ -35,7 +39,15 @@ impl LoadSaveUndo {
         assert!(self.loaded.as_ref().map(| ld | *ld == def.name).unwrap_or(false));
 
         let json_content = serde_json::to_string(def).map_err(|e| format!("Failed to serialize to JSON: {}", e))?;
+        if self.redo_index < self.undo_stack.len() {
+            self.undo_stack.truncate(self.redo_index);
+        }
         self.undo_stack.push(json_content);
+        self.redo_index = self.undo_stack.len();
+        while self.undo_stack.len() > UNDO_LIMIT {
+            self.undo_stack.remove(0);
+            self.redo_index -= 1;
+        }
 
         let path = Path::new(FILE_LOCATIONS).join(format!("{}.json", def.name));
         if let Some(parent) = path.parent() {
@@ -46,13 +58,24 @@ impl LoadSaveUndo {
     }
 
     pub fn undo(&mut self) -> Option<TextureDefinition> {
-        if self.undo_stack.len() <= 1 {
+        if self.redo_index <= 1 {
             return None;
         }
-        self.undo_stack.pop();
-        let last_content = self.undo_stack.last().unwrap();
+        self.redo_index -= 1;
+        let last_content = self.undo_stack[self.redo_index - 1].as_str();
         let mut ret: TextureDefinition = serde_json::from_str(last_content).ok().expect("How did we get invalid JSON in the undo stack?");
         ret.name = self.loaded.as_ref().unwrap().to_string();
+        Some(ret)
+    }
+    
+    pub fn redo(&mut self) -> Option<TextureDefinition> {
+        if self.redo_index >= self.undo_stack.len() {
+            return None;
+        }
+        let last_content = self.undo_stack[self.redo_index].as_str();
+        let mut ret: TextureDefinition = serde_json::from_str(last_content).ok().expect("How did we get invalid JSON in the undo stack?");
+        ret.name = self.loaded.as_ref().unwrap().to_string();
+        self.redo_index += 1;
         Some(ret)
     }
 }

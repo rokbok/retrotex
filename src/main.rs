@@ -101,12 +101,18 @@ impl eframe::App for ExampleApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut regen_needed = self.img_texture.is_none();
         let closing = ctx.input(|i| {
-            if i.key_down(egui::Key::F10) {
+            if i.key_pressed(egui::Key::F10) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            if i.key_down(egui::Key::Z) && i.modifiers.ctrl {
+            if i.key_pressed(egui::Key::Z) && i.modifiers.ctrl {
                 if let Some(undo_def) = self.load_save_undo.undo() {
                     self.def = undo_def;
+                    regen_needed = true;
+                }
+            }
+            if i.key_pressed(egui::Key::Y) && i.modifiers.ctrl {
+                if let Some(redo_def) = self.load_save_undo.redo() {
+                    self.def = redo_def;
                     regen_needed = true;
                 }
             }
