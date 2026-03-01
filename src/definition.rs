@@ -158,12 +158,7 @@ pub struct TexturePass {
 impl TexturePass {
     fn apply(&self, dest: Vec3, x: i32, y: i32) -> Vec3 {
         let inside_rect = match &self.rect {
-            Some(rect) => {
-                if (x == 0 && y == 0) || (x == 255 && y == 255) {
-                    info!("Checking rect for pass '{}': rect=({}, {}, {}, {}), point=({}, {}): {}", self.name.as_deref().unwrap_or(""), rect.x, rect.y, rect.w, rect.h, x, y, rect.contains(x, y));
-                }
-                rect.contains(x, y)
-            },
+            Some(rect) => rect.contains(x, y),
             None => true,
         };
         if !inside_rect{
