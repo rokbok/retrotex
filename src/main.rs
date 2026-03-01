@@ -2,7 +2,7 @@
 use eframe::egui;
 use egui::{Color32, ColorImage, TextureHandle};
 
-use crate::{definition::{Color, TextureDefinition}, util::quick_hash};
+use crate::{definition::TextureDefinition, util::quick_hash};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
@@ -66,12 +66,7 @@ impl ExampleApp {
         for y in 0..IMG_SIZE {
             for x in 0..IMG_SIZE {
                 let c = self.def.generate_pixel(x, y);
-                img.pixels[idx(x, y)] = Color32::from_rgba_unmultiplied(
-                    (c.x * 255.0).clamp(0.0, 255.0) as u8,
-                    (c.y * 255.0).clamp(0.0, 255.0) as u8,
-                    (c.z * 255.0).clamp(0.0, 255.0) as u8,
-                    255,
-                );
+                img.pixels[idx(x, y)] = egui::Rgba::from_rgba_unmultiplied(c.x.clamp(0.0, 1.0), c.y.clamp(0.0, 1.0), c.z.clamp(0.0, 1.0), 1.0).into();
             }
         }
         if let Some(tex) = &mut self.img_t {
@@ -97,7 +92,8 @@ impl ExampleApp {
 impl eframe::App for ExampleApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
 
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if ctx.input(|i| i.key_pressed(egui::Key::F10)) {
+            self.save_current();
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
 

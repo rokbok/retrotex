@@ -2,6 +2,7 @@ use std::{fmt::Display, hash::{Hash, Hasher}};
 
 use glam::{Vec3, Vec4};
 use serde::{Deserialize, Serialize};
+use strum_macros::{AsRefStr, EnumString, VariantNames};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
@@ -45,26 +46,61 @@ pub struct SolidColorGenerator {
     pub color: Color,
 }
 
+impl Default for SolidColorGenerator {
+    fn default() -> Self {
+        Self { color: Color::new(1.0, 0.0, 0.0, 1.0) }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+pub enum WhiteNoiseSeparation {
+    Combined,
+    Alpha,
+    PerChannel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+pub struct WhiteNoiseGenerator {
+    pub seed: u32,
+    pub color1: Color,
+    pub color2: Color,
+    pub per_channel: bool,
+    pub scale: i32,
+}
+
+//fn hash_u32_2(x: u32, y: u32) -> u32 {
+//     let mut h = x.wrapping_mul(374761393)
+//         .wrapping_add(y.wrapping_mul(668265263));
+
+//     h ^= h >> 13;
+//     h = h.wrapping_mul(1274126177);
+//     h ^= h >> 16;
+
+//     h
+// }
+
+
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, AsRefStr, EnumString, VariantNames)]
 pub enum GeneratorOption {
     SolidColor(SolidColorGenerator),
 }
+
 impl GeneratorOption {
-    fn generate(&self, x: i32, y: i32) -> Vec4 {
+    fn generate(&self, _x: i32, _y: i32) -> Vec4 {
         match self {
             GeneratorOption::SolidColor(opts) => Vec4::from(opts.color.v),
         }
     }
 }
 
-impl Default for GeneratorOption {
+impl std::default::Default for GeneratorOption {
     fn default() -> Self {
         let opts = SolidColorGenerator { color: Color::new(1.0, 0.0, 0.0, 1.0) };
         Self::SolidColor(opts)
     }
 }
 
-#[derive(PartialEq, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize, AsRefStr, EnumString, VariantNames)]
 pub enum BlendMode {
     Normal,
     Additive,
@@ -155,11 +191,12 @@ impl Default for TexturePass {
 pub struct TextureDefinition {
     #[serde(skip)] // This will be the filename
     pub name: String,
+    pub background: Color,
     pub passes: Vec<TexturePass>,
 }
 impl TextureDefinition {
     pub fn generate_pixel(&self, x: i32, y: i32) -> Vec3 {
-        let mut ret = Vec3::new(1.0, 0.0, 0.0);
+        let mut ret = Vec3::new(self.background.v[0], self.background.v[1], self.background.v[2]);
         for pass in &self.passes{
             ret = pass.apply(ret, x, y);
         }
@@ -171,6 +208,7 @@ impl Default for TextureDefinition {
     fn default() -> Self {
         Self {
             name: DEFAULT_NAME.to_string(),
+            background: Color::new(0.0, 0.0, 0.0, 1.0),
             passes: vec![ TexturePass {
                 name: None,
                 blend_mode: BlendMode::Normal,
