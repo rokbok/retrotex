@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use egui::{Color32, ColorImage, TextureHandle};
 
-use crate::{definition::TextureDefinition, load_save_undo::LoadSaveUndo, util::quick_hash};
+use crate::{load_save_undo::LoadSaveUndo, util::quick_hash};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
@@ -39,27 +39,15 @@ struct ExampleApp {
 impl ExampleApp {
     fn new() -> Self {
         let mut load_save_undo = LoadSaveUndo::new();
-        let loaded_def = load_save_undo.load_by_name(definition::DEFAULT_NAME);
-        let mut save = false;
-        match &loaded_def {
-            Ok(def) => info!("Loaded texture definition: {}", def.name),
-            Err(e) => {
-                save = true;
-                warn!("Failed to load texture definition, creating default: {}", e)
-            },
-        }
+        let def = load_save_undo.load_by_name_or_create_default(definition::DEFAULT_NAME);
 
-        let mut ret = Self {
-            def: loaded_def.unwrap_or_else(| _ | TextureDefinition::default()),
+        let ret = Self {
+            def,
             tmp_str: String::new(),
             img_texture: None,
             auto_save_at: None,
             load_save_undo,
         };
-
-        if save {
-            ret.save_current();
-        }
 
         ret
     }
@@ -121,17 +109,19 @@ impl eframe::App for ExampleApp {
 
         ctx.set_pixels_per_point(1.5);
 
-        egui::SidePanel::right("right_panel").show(ctx, |ui| {
-            let old_hash = quick_hash(&self.def);
-            definiton_ui::definition_ui(&mut self.def, &mut self.tmp_str, ui);
-            let new_hash = quick_hash(&self.def);
-            let changed = old_hash != new_hash;
-            if changed {
-                self.auto_save_at = Some(Instant::now() + Duration::from_millis(AUTO_SAVE_DELAY_MILLIS));
-            }
+        egui::SidePanel::right("right_panel")
+            .default_width(300.0)
+            .show(ctx, |ui| {
+                let old_hash = quick_hash(&self.def);
+                definiton_ui::definition_ui(&mut self.def, &mut self.tmp_str, ui);
+                let new_hash = quick_hash(&self.def);
+                let changed = old_hash != new_hash;
+                if changed {
+                    self.auto_save_at = Some(Instant::now() + Duration::from_millis(AUTO_SAVE_DELAY_MILLIS));
+                }
 
-            regen_needed |= changed;
-        });
+                regen_needed |= changed;
+            });
 
         if regen_needed {
             self.regenerate(Some(ctx));

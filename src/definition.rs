@@ -6,10 +6,11 @@ use strum_macros::{AsRefStr, EnumString, VariantNames};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
+use twox_hash::XxHash32;
 
 pub const DEFAULT_NAME: &str = "unnamed";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Copy)]
 pub struct Color {
     pub v: [f32; 4],
 }
@@ -35,68 +36,135 @@ impl From<Color> for [f32; 4] {
     }
 }
 
+impl From<Vec4> for Color {
+    fn from(vec: Vec4) -> Self {
+        Self { v: [vec.x, vec.y, vec.z, vec.w] }
+    }
+}
+
+impl From<Color> for Vec4 {
+    fn from(color: Color) -> Self {
+        Vec4::new(color.v[0], color.v[1], color.v[2], color.v[3])
+    }
+}
+
 impl Color {
     pub fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
         Self { v: [r, g, b, a] }
     }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
-pub struct SolidColorGenerator {
-    pub color: Color,
-}
+    /// Convert a single sRGB channel in [0,1] to linear space.
+    /// Uses the standard IEC 61966-2-1 / sRGB transfer function.
+    fn srgb_channel_to_linear(c: f32) -> f32 {
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    }
 
-impl Default for SolidColorGenerator {
-    fn default() -> Self {
-        Self { color: Color::new(1.0, 0.0, 0.0, 1.0) }
+    pub fn from_hex(hex: &str) -> Result<Self, &'static str> {
+        let hex = hex.trim_start_matches('#');
+        if hex.len() != 6 && hex.len() != 8 {
+            return Err("Hex color must be 6 or 8 characters long");
+        }
+        let r = u8::from_str_radix(&hex[0..2], 16).map_err(|_| "Invalid hex color")?;
+        let g = u8::from_str_radix(&hex[2..4], 16).map_err(|_| "Invalid hex color")?;
+        let b = u8::from_str_radix(&hex[4..6], 16).map_err(|_| "Invalid hex color")?;
+        let a = if hex.len() == 8 {
+            u8::from_str_radix(&hex[6..8], 16).map_err(|_| "Invalid hex color")?
+        } else {
+            255
+        };
+
+        let r_lin = Self::srgb_channel_to_linear(r as f32 / 255.0);
+        let g_lin = Self::srgb_channel_to_linear(g as f32 / 255.0);
+        let b_lin = Self::srgb_channel_to_linear(b as f32 / 255.0);
+        let a_f = a as f32 / 255.0;
+
+        Ok(Self::new(r_lin, g_lin, b_lin, a_f))
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, AsRefStr, EnumString, VariantNames, PartialEq, Eq)]
 pub enum WhiteNoiseSeparation {
-    Combined,
-    Alpha,
-    PerChannel,
+    AllCombined,
+    SeparateAlpha,
+    EachChannel,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct WhiteNoiseGenerator {
     pub seed: u32,
-    pub color1: Color,
-    pub color2: Color,
-    pub per_channel: bool,
+    pub separation: WhiteNoiseSeparation,
     pub scale: i32,
 }
 
-//fn hash_u32_2(x: u32, y: u32) -> u32 {
-//     let mut h = x.wrapping_mul(374761393)
-//         .wrapping_add(y.wrapping_mul(668265263));
+impl WhiteNoiseGenerator {
+    #[inline]
+    fn hash_to_unit_f32(h: u64) -> f32 {
+        let x = h as u32 | (h >> 32) as u32;
+        let mant = x >> 8;
+        (mant as f32) * (1.0 / 16_777_216.0)
+    }
 
-//     h ^= h >> 13;
-//     h = h.wrapping_mul(1274126177);
-//     h ^= h >> 16;
+    fn generate(&self, mut x: i32, mut y: i32, c0: Vec4, c1: Vec4) -> Vec4 {
+        let mut hasher = XxHash32::with_seed(self.seed);
+        if self.scale > 1 {
+            x = x / self.scale;
+            y = y / self.scale;
+        }
+        hasher.write_i32(x);
+        hasher.write_i32(y);
+        let r = Self::hash_to_unit_f32(hasher.finish());
+        let a = if self.separation != WhiteNoiseSeparation::AllCombined {
+            hasher.write_u32(3);
+            Self::hash_to_unit_f32(hasher.finish())
+        } else {
+            r
+        };
+        let g = if self.separation == WhiteNoiseSeparation::EachChannel {
+            hasher.write_u32(1);
+            Self::hash_to_unit_f32(hasher.finish())
+        } else {
+            r
+        };
+        let b = if self.separation == WhiteNoiseSeparation::EachChannel {
+            hasher.write_u32(2);
+            Self::hash_to_unit_f32(hasher.finish())
+        } else {
+            r
+        };
+        let t = Vec4::new(r, g, b, a);
+        c0 + t * (c1 - c0)
+    }
+}
 
-//     h
-// }
+impl Default for WhiteNoiseGenerator {
+    fn default() -> Self {
+        Self { seed: rand::random(), separation: WhiteNoiseSeparation::AllCombined, scale: 1 }
+    }
+}
 
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, AsRefStr, EnumString, VariantNames)]
 pub enum GeneratorOption {
-    SolidColor(SolidColorGenerator),
+    SolidColor,
+    WhiteNoise(WhiteNoiseGenerator),
 }
 
 impl GeneratorOption {
-    fn generate(&self, _x: i32, _y: i32) -> Vec4 {
+    fn generate(&self, x: i32, y: i32, c0: Vec4, c1: Vec4) -> Vec4 {
         match self {
-            GeneratorOption::SolidColor(opts) => Vec4::from(opts.color.v),
+            GeneratorOption::SolidColor => c0,
+            GeneratorOption::WhiteNoise(opts) => opts.generate(x, y, c0, c1),
         }
     }
 }
 
 impl std::default::Default for GeneratorOption {
     fn default() -> Self {
-        let opts = SolidColorGenerator { color: Color::new(1.0, 0.0, 0.0, 1.0) };
-        Self::SolidColor(opts)
+        Self::SolidColor
     }
 }
 
@@ -151,6 +219,8 @@ impl Rect {
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct TexturePass {
     pub name: Option<String>,
+    pub color0: Color,
+    pub color1: Color,
     pub blend_mode: BlendMode,
     pub rect: Option<Rect>,
     pub generator: GeneratorOption,
@@ -165,7 +235,13 @@ impl TexturePass {
             return dest;
         }
 
-        let src = self.generator.generate(x, y);
+        let (gen_x, gen_y) = if let Some(rect) = &self.rect {
+            (x - rect.x, y - rect.y)
+        } else {
+            (x, y)
+        };
+
+        let src = self.generator.generate(gen_x, gen_y, self.color0.into(), self.color1.into());
         self.blend_mode.apply(dest, src)
     }
 }
@@ -174,6 +250,8 @@ impl Default for TexturePass {
     fn default() -> Self {
         Self {
             name: None,
+            color0: Color::from_hex("#f48a71").unwrap(),
+            color1: Color::from_hex("#c3edd9").unwrap(),
             blend_mode: BlendMode::Normal,
             rect: None,
             generator: GeneratorOption::default(),
@@ -204,12 +282,7 @@ impl Default for TextureDefinition {
         Self {
             name: DEFAULT_NAME.to_string(),
             background: Color::new(0.0, 0.0, 0.0, 1.0),
-            passes: vec![ TexturePass {
-                name: None,
-                blend_mode: BlendMode::Normal,
-                rect: None,
-                generator: GeneratorOption::SolidColor(SolidColorGenerator { color: Color::new(0.1, 0.1, 0.1, 1.0) })
-            }],
+            passes: vec![TexturePass::default()],
         }
     }
 }
