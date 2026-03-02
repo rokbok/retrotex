@@ -1,12 +1,13 @@
 use std::{fmt::Display, hash::{Hash, Hasher}};
 
-use glam::{Vec3, Vec4};
+use glam::{FloatExt, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr, EnumString, VariantNames};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
-use twox_hash::XxHash32;
+
+use crate::noise;
 
 pub const DEFAULT_NAME: &str = "unnamed";
 
@@ -84,87 +85,15 @@ impl Color {
 
         Ok(Self::new(r_lin, g_lin, b_lin, a_f))
     }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize, Hash, AsRefStr, EnumString, VariantNames, PartialEq, Eq)]
-pub enum WhiteNoiseSeparation {
-    AllCombined,
-    SeparateAlpha,
-    EachChannel,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
-pub struct WhiteNoiseGenerator {
-    pub seed: u32,
-    pub separation: WhiteNoiseSeparation,
-    pub scale: i32,
-}
-
-impl WhiteNoiseGenerator {
-    #[inline]
-    fn hash_to_unit_f32(h: u64) -> f32 {
-        let x = h as u32 | (h >> 32) as u32;
-        let mant = x >> 8;
-        (mant as f32) * (1.0 / 16_777_216.0)
+    pub fn random() -> Color {
+        Color { v: [rand::random(), rand::random(), rand::random(), 1.0] }
     }
 
-    fn generate(&self, mut x: i32, mut y: i32, c0: Vec4, c1: Vec4) -> Vec4 {
-        let mut hasher = XxHash32::with_seed(self.seed);
-        if self.scale > 1 {
-            x = x / self.scale;
-            y = y / self.scale;
-        }
-        hasher.write_i32(x);
-        hasher.write_i32(y);
-        let r = Self::hash_to_unit_f32(hasher.finish());
-        let a = if self.separation != WhiteNoiseSeparation::AllCombined {
-            hasher.write_u32(3);
-            Self::hash_to_unit_f32(hasher.finish())
-        } else {
-            r
-        };
-        let g = if self.separation == WhiteNoiseSeparation::EachChannel {
-            hasher.write_u32(1);
-            Self::hash_to_unit_f32(hasher.finish())
-        } else {
-            r
-        };
-        let b = if self.separation == WhiteNoiseSeparation::EachChannel {
-            hasher.write_u32(2);
-            Self::hash_to_unit_f32(hasher.finish())
-        } else {
-            r
-        };
-        let t = Vec4::new(r, g, b, a);
-        c0 + t * (c1 - c0)
-    }
-}
-
-impl Default for WhiteNoiseGenerator {
-    fn default() -> Self {
-        Self { seed: rand::random(), separation: WhiteNoiseSeparation::AllCombined, scale: 1 }
-    }
-}
-
-
-#[derive(Debug, Clone, Serialize, Deserialize, Hash, AsRefStr, EnumString, VariantNames)]
-pub enum GeneratorOption {
-    SolidColor,
-    WhiteNoise(WhiteNoiseGenerator),
-}
-
-impl GeneratorOption {
-    fn generate(&self, x: i32, y: i32, c0: Vec4, c1: Vec4) -> Vec4 {
-        match self {
-            GeneratorOption::SolidColor => c0,
-            GeneratorOption::WhiteNoise(opts) => opts.generate(x, y, c0, c1),
-        }
-    }
-}
-
-impl std::default::Default for GeneratorOption {
-    fn default() -> Self {
-        Self::SolidColor
+    pub fn with_alpha(&self, alpha: f32) -> Color {
+        let mut new_color = *self;
+        new_color.v[3] = alpha;
+        new_color
     }
 }
 
@@ -219,13 +148,34 @@ impl Rect {
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct TexturePass {
     pub name: Option<String>,
-    pub color0: Color,
-    pub color1: Color,
+    pub color: Color,
+    pub perlin: bool,
+    pub perlin_scale: i32,
+    pub perlin_octaves: i32,
+    pub perlin_seed: u32,
+    pub white_noise: bool,
+    pub white_noise_scale: i32,
+    pub white_noise_seed: u32,
     pub blend_mode: BlendMode,
     pub rect: Option<Rect>,
-    pub generator: GeneratorOption,
 }
 impl TexturePass {
+    pub fn new() -> Self {
+        Self {
+            name: None,
+            color: Color::random().with_alpha(0.5),
+            perlin: false,
+            perlin_scale: 10,
+            perlin_octaves: 4,
+            perlin_seed: rand::random(),
+            white_noise: false,
+            white_noise_scale: 1,
+            white_noise_seed: rand::random(),
+            blend_mode: BlendMode::Normal,
+            rect: None,
+        }
+    }
+    
     fn apply(&self, dest: Vec3, x: i32, y: i32) -> Vec3 {
         let inside_rect = match &self.rect {
             Some(rect) => rect.contains(x, y),
@@ -241,7 +191,18 @@ impl TexturePass {
             (x, y)
         };
 
-        let src = self.generator.generate(gen_x, gen_y, self.color0.into(), self.color1.into());
+        let mut src: Vec4 = self.color.into();
+
+        if self.perlin {
+            let noise_scale = 0.002 * self.perlin_scale as f32;
+            let noise = noise::fbm2(noise_scale * gen_x as f32, noise_scale * gen_y as f32, self.perlin_octaves as u32, 2.0, 0.5, self.perlin_seed as f32);
+            src.w *= noise.remap(-1.0, 1.0, 0.0, 1.0);
+        }
+
+        if self.white_noise {
+            src.w *= noise::white_noise(gen_x, gen_y, self.white_noise_scale, self.white_noise_seed);
+        }
+
         self.blend_mode.apply(dest, src)
     }
 }
@@ -250,11 +211,16 @@ impl Default for TexturePass {
     fn default() -> Self {
         Self {
             name: None,
-            color0: Color::from_hex("#f48a71").unwrap(),
-            color1: Color::from_hex("#c3edd9").unwrap(),
+            color: Color::from_hex("#f48a71").unwrap(),
+            perlin: false,
+            perlin_seed: 0,
+            perlin_scale: 10,
+            perlin_octaves: 4,
+            white_noise: false,
+            white_noise_scale: 1,
+            white_noise_seed: 0,
             blend_mode: BlendMode::Normal,
             rect: None,
-            generator: GeneratorOption::default(),
         }
     }
 }
@@ -268,6 +234,14 @@ pub struct TextureDefinition {
     pub passes: Vec<TexturePass>,
 }
 impl TextureDefinition {
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            background: Color::new(0.0, 0.0, 0.0, 1.0),
+            passes: vec![TexturePass::new()],
+        }
+    }
+
     pub fn generate_pixel(&self, x: i32, y: i32) -> Vec3 {
         let mut ret = Vec3::new(self.background.v[0], self.background.v[1], self.background.v[2]);
         for pass in &self.passes{
@@ -282,7 +256,7 @@ impl Default for TextureDefinition {
         Self {
             name: DEFAULT_NAME.to_string(),
             background: Color::new(0.0, 0.0, 0.0, 1.0),
-            passes: vec![TexturePass::default()],
+            passes: vec![],
         }
     }
 }

@@ -23,7 +23,7 @@ impl LoadSaveUndo {
         }
     }
 
-    pub fn load_by_name_or_create_default(&mut self, name: &str) -> TextureDefinition {
+    pub fn load_by_name_or_create(&mut self, name: &str) -> TextureDefinition {
         match self.load_by_name(name) {
             Ok(def) => {
                 info!("Loaded texture definition: {}", def.name);
@@ -31,8 +31,7 @@ impl LoadSaveUndo {
             },
             Err(e) => {
                 warn!("Failed to load texture definition, creating default: {}", e);
-                let mut def = TextureDefinition::default();
-                def.name = name.to_string();
+                let def = TextureDefinition::new(name);
                 self.loaded = Some(name.to_string());
                 self.save(&def).expect("Failed to save default texture definition");
                 def

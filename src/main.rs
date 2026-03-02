@@ -13,6 +13,7 @@ pub mod definition;
 pub mod definiton_ui;
 pub mod load_save_undo;
 pub mod util;
+pub mod noise;
 
 pub const IMG_SIZE: i32 = 256;
 const AUTO_SAVE_DELAY_MILLIS: u64 = 200;
@@ -39,7 +40,7 @@ struct ExampleApp {
 impl ExampleApp {
     fn new() -> Self {
         let mut load_save_undo = LoadSaveUndo::new();
-        let def = load_save_undo.load_by_name_or_create_default(definition::DEFAULT_NAME);
+        let def = load_save_undo.load_by_name_or_create(definition::DEFAULT_NAME);
 
         let ret = Self {
             def,

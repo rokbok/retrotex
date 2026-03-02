@@ -1,9 +1,9 @@
-use std::{hash::{DefaultHasher, Hasher}, str::FromStr, convert::AsRef};
+use std::{hash::{DefaultHasher, Hasher}, str::FromStr, convert::AsRef, fmt::Write};
 
 use egui::Button;
 use strum::VariantNames;
 
-use crate::{IMG_SIZE, definition::{self, Color, TextureDefinition, TexturePass}};
+use crate::{IMG_SIZE, definition::{self, TextureDefinition, TexturePass}};
 
 pub enum PassOperation { Remove(usize) }
 
@@ -38,29 +38,6 @@ where <T as FromStr>::Err: std::fmt::Debug
         });
 }
 
-pub fn generate_ui_for_generator_option(generator: &mut definition::GeneratorOption, color0: &mut Color, color1: &mut Color, ui: &mut egui::Ui) {
-    match generator {
-        definition::GeneratorOption::SolidColor => {
-            ui.horizontal(|ui| {
-                ui.label("Color:");
-                ui.color_edit_button_rgba_unmultiplied(&mut color0.v).changed();
-            });
-        },
-        definition::GeneratorOption::WhiteNoise(white_noise_gen) => {
-            ui.horizontal_wrapped(|ui| {
-                ui.color_edit_button_rgba_unmultiplied(&mut color0.v);
-                ui.color_edit_button_rgba_unmultiplied(&mut color1.v);
-                ui.label("Scale:");
-                ui.add(egui::DragValue::new(&mut white_noise_gen.scale).range(1..=128));
-                add_enum_dropdown(ui, &mut white_noise_gen.separation, "white_noise_separation", 0, false);
-                if ui.button("Re-seed").clicked() {
-                    white_noise_gen.seed = rand::random();
-                }
-            });
-        },
-    }
-}
-
 pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut egui::Ui) {
     ui.heading(&def.name);
     ui.horizontal(| ui | {
@@ -71,34 +48,53 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
     let mut pass_op = Option::<PassOperation>::None;
     for (pass_idx, pass) in def.passes.iter_mut().enumerate() {
         ui.group(| ui | {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), | ui | {
-                if ui.button("Reset name").clicked() {
-                    pass.name = None;
-                }
+            tmp_str.clear();
+            match &pass.name {
+                Some(name) => tmp_str.push_str(name),
+                None => {
+                    tmp_str.clear();
+                    write!(tmp_str, "Pass {}", pass_idx).unwrap();
+                },
+            }
 
-                tmp_str.clear();
-                match &pass.name {
-                    Some(name) => tmp_str.push_str(name),
-                    None => tmp_str.push_str(pass.generator.as_ref()),
+            let name_response = add_full_width(ui, egui::TextEdit::singleline(tmp_str).hint_text("Pass Name"));
+            if name_response.changed() {
+                match &mut pass.name {
+                    Some(name) => {
+                        name.clear();
+                        name.push_str(tmp_str);
+                    },
+                    None => pass.name = Some(tmp_str.clone()),
                 }
-                let edit = egui::TextEdit::singleline(tmp_str)
-                                            .hint_text("Pass Name");
+            }
 
-                if add_full_width(ui, edit).changed() {
-                    match &mut pass.name {
-                        Some(name) => {
-                            name.clear();
-                            name.push_str(tmp_str);
-                        },
-                        None => pass.name = Some(tmp_str.clone()),
+            if tmp_str.is_empty() && !name_response.has_focus() {
+                pass.name = None;
+            }
+
+            ui.color_edit_button_rgba_unmultiplied(&mut pass.color.v);
+            ui.horizontal_wrapped(| ui | { 
+                ui.checkbox(&mut pass.perlin, "Perlin");
+                if pass.perlin {
+                    ui.label("Scale:");
+                    ui.add(egui::DragValue::new(&mut pass.perlin_scale).range(1..=400));
+                    ui.label("Octaves:");
+                    ui.add(egui::DragValue::new(&mut pass.perlin_octaves));
+                    if ui.button("Re-seed").clicked() {
+                        pass.perlin_seed = rand::random();
                     }
                 }
             });
-
-            ui.separator();
-            add_enum_dropdown(ui, &mut pass.generator, "Generator", pass_idx, true);
-            generate_ui_for_generator_option(&mut pass.generator, &mut pass.color0, &mut pass.color1, ui);
-            ui.separator();
+            ui.horizontal_wrapped(| ui | {
+                ui.checkbox(&mut pass.white_noise, "White Noise");
+                if pass.white_noise {
+                    ui.label("Scale:");
+                    ui.add(egui::DragValue::new(&mut pass.white_noise_scale).range(1..=(IMG_SIZE/2)));
+                    if ui.button("Re-seed").clicked() {
+                        pass.white_noise_seed = rand::random();
+                    }
+                }
+            });
             ui.horizontal(| ui | {
                 ui.label("Blend:");
                 add_enum_dropdown(ui, &mut pass.blend_mode, "blend_mode", pass_idx, false);
@@ -149,8 +145,7 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
         }
     }
 
-
     if add_full_width(ui, Button::new("Add Pass")).clicked() {
-        def.passes.push(TexturePass::default());
+        def.passes.push(TexturePass::new());
     }
 }
