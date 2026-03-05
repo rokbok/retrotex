@@ -35,6 +35,7 @@ struct ExampleApp {
     img_texture: Option<TextureHandle>,
     auto_save_at: Option<Instant>,
     load_save_undo: LoadSaveUndo,
+    clipboard: arboard::Clipboard,
 }
 
 impl ExampleApp {
@@ -48,6 +49,7 @@ impl ExampleApp {
             img_texture: None,
             auto_save_at: None,
             load_save_undo,
+            clipboard: arboard::Clipboard::new().expect("Failed to initialize clipboard"),
         };
 
         ret
@@ -111,10 +113,10 @@ impl eframe::App for ExampleApp {
         ctx.set_pixels_per_point(1.5);
 
         egui::SidePanel::right("right_panel")
-            .default_width(300.0)
+            .default_width(400.0)
             .show(ctx, |ui| {
                 let old_hash = quick_hash(&self.def);
-                definiton_ui::definition_ui(&mut self.def, &mut self.tmp_str, ui);
+                definiton_ui::definition_ui(&mut self.def, &mut self.tmp_str, ui, &mut self.clipboard);
                 let new_hash = quick_hash(&self.def);
                 let changed = old_hash != new_hash;
                 if changed {

@@ -64,6 +64,16 @@ impl Color {
         }
     }
 
+    /// Convert a single linear channel in [0,1] to sRGB space.
+    /// Inverse of `srgb_channel_to_linear` using the standard sRGB transfer function.
+    fn linear_channel_to_srgb(c: f32) -> f32 {
+        if c <= 0.0031308 {
+            c * 12.92
+        } else {
+            1.055 * c.powf(1.0 / 2.4) - 0.055
+        }
+    }
+
     pub fn from_hex(hex: &str) -> Result<Self, &'static str> {
         let hex = hex.trim_start_matches('#');
         if hex.len() != 6 && hex.len() != 8 {
@@ -84,6 +94,28 @@ impl Color {
         let a_f = a as f32 / 255.0;
 
         Ok(Self::new(r_lin, g_lin, b_lin, a_f))
+    }
+
+    pub fn to_hex(&self) -> String {
+        let mut s = String::new();
+        // write_hex returns a fmt::Result; unwrap here is fine for an in-memory String
+        self.write_hex(&mut s).unwrap();
+        s
+    }
+
+    /// Write the hex representation (sRGB) into any `std::fmt::Write`.
+    /// Useful to append into an existing `String` without allocating a new one.
+    pub fn write_hex<W: std::fmt::Write>(&self, out: &mut W) -> std::fmt::Result {
+        let r_lin = self.v[0].clamp(0.0, 1.0);
+        let g_lin = self.v[1].clamp(0.0, 1.0);
+        let b_lin = self.v[2].clamp(0.0, 1.0);
+        let a = (self.v[3].clamp(0.0, 1.0) * 255.0).round() as u8;
+
+        let r = (Self::linear_channel_to_srgb(r_lin) * 255.0).round().clamp(0.0, 255.0) as u8;
+        let g = (Self::linear_channel_to_srgb(g_lin) * 255.0).round().clamp(0.0, 255.0) as u8;
+        let b = (Self::linear_channel_to_srgb(b_lin) * 255.0).round().clamp(0.0, 255.0) as u8;
+
+        write!(out, "#{:02X}{:02X}{:02X}{:02X}", r, g, b, a)
     }
 
     pub fn random() -> Color {
@@ -161,7 +193,6 @@ pub struct TexturePass {
     pub white_noise_use_threshold: bool,
     pub white_noise_threshold: i32,
     pub blend_mode: BlendMode,
-    pub use_rect: bool,
     pub rect: Rect,
     pub round_rect: bool,
     pub round_rect_radius: i32,
@@ -184,15 +215,12 @@ impl TexturePass {
     }
     
     fn apply(&self, dest: Vec3, x: i32, y: i32) -> Vec3 {
-        if self.use_rect && !self.rect.contains(x, y) {
+        if !self.rect.contains(x, y) {
             return dest;
         }
 
-        let (gen_x, gen_y) = if self.use_rect {
-            (x - self.rect.x, y - self.rect.y)
-        } else {
-            (x, y)
-        };
+        let gen_x = x - self.rect.x;
+        let gen_y = y - self.rect.y;
 
         let mut src: Vec4 = self.color.into();
 
@@ -214,22 +242,20 @@ impl TexturePass {
             src.w *= noise.saturate();
         }
 
-        if self.use_rect {
-            if self.round_rect {
-                let rad = (self.round_rect_radius + 2) as f32;
-                let half_size = Vec2::new(0.5 * self.rect.w as f32, 0.5 * self.rect.h as f32);
-                let rel = Vec2::new(gen_x as f32, gen_y as f32) + 0.5 - half_size;
-                let d = util::box_sdf(rel, half_size - rad) - rad;
-                let fact = if self.round_rect_aa {
-                    d.remap(0.5, -0.5, 0.0, 1.0).saturate()
-                } else {
-                    if d > 0.0 { 0.0 } else { 1.0 }
-                };
-                if fact <= 0.0 {
-                    return dest;
-                }
-                src.w *= fact;
+        if self.round_rect {
+            let rad = (self.round_rect_radius + 2) as f32;
+            let half_size = Vec2::new(0.5 * self.rect.w as f32, 0.5 * self.rect.h as f32);
+            let rel = Vec2::new(gen_x as f32, gen_y as f32) + 0.5 - half_size;
+            let d = util::box_sdf(rel, half_size - rad) - rad;
+            let fact = if self.round_rect_aa {
+                d.remap(0.5, -0.5, 0.0, 1.0).saturate()
+            } else {
+                if d > 0.0 { 0.0 } else { 1.0 }
+            };
+            if fact <= 0.0 {
+                return dest;
             }
+            src.w *= fact;
         }
 
         self.blend_mode.apply(dest, src)
@@ -253,8 +279,7 @@ impl Default for TexturePass {
             white_noise_use_threshold: false,
             white_noise_threshold: 50,
             blend_mode: BlendMode::Alpha,
-            use_rect: false,
-            rect: Rect { x: IMG_SIZE / 4, y: IMG_SIZE / 4, w: IMG_SIZE / 2, h: IMG_SIZE / 2 },
+            rect: Rect { x: 0, y: 0, w: IMG_SIZE, h: IMG_SIZE },
             round_rect: false,
             round_rect_radius: 10,
             round_rect_aa: false,
@@ -299,6 +324,60 @@ impl Default for TextureDefinition {
             name: DEFAULT_NAME.to_string(),
             background: Color::new(0.0, 0.0, 0.0, 1.0),
             passes: vec![],
+        }
+    }
+}
+
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::Color;
+
+    #[test]
+    fn srgb_channel_roundtrip() {
+        let samples = [0.0_f32, 0.001, 0.0031308, 0.02, 0.18, 0.5, 1.0];
+        let eps = 1e-6_f32;
+
+        for &s in &samples {
+            let lin = Color::srgb_channel_to_linear(s);
+            let back = Color::linear_channel_to_srgb(lin);
+            let diff = (s - back).abs();
+            assert!(diff <= eps, "srgb->linear->srgb mismatch: s={} back={} diff={}", s, back, diff);
+        }
+
+        // also test some linear-starting values -> srgb -> linear
+        let lin_samples = [0.0_f32, 1e-6, 0.01, 0.1, 0.5, 1.0];
+        for &l in &lin_samples {
+            let s = Color::linear_channel_to_srgb(l);
+            let back = Color::srgb_channel_to_linear(s);
+            let diff = (l - back).abs();
+            assert!(diff <= eps, "linear->srgb->linear mismatch: l={} back={} diff={}", l, back, diff);
+        }
+    }
+
+    #[test]
+    fn hex_roundtrip() {
+        let samples = [
+            Color::new(0.0, 0.0, 0.0, 1.0),
+            Color::new(1.0, 1.0, 1.0, 1.0),
+            Color::new(0.18, 0.2, 0.5, 0.75),
+            Color::new(0.003, 0.001, 0.5, 0.0),
+        ];
+
+        // allow for 8-bit quantization + small numeric error
+        let eps = 0.006_f32;
+
+        for &c in &samples {
+            let hex = c.to_hex();
+            let parsed = Color::from_hex(&hex).expect("from_hex failed");
+            for i in 0..4 {
+                let a = c.v[i];
+                let b = parsed.v[i];
+                let diff = (a - b).abs();
+                assert!(diff <= eps, "to_hex/from_hex roundtrip mismatch idx={} a={} b={} diff={} hex={}", i, a, b, diff, hex);
+            }
         }
     }
 }
