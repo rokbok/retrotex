@@ -152,6 +152,7 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                     pass.rect.h = b - pass.rect.y;
                 }
             });
+
             ui.horizontal_wrapped(| ui | {
                 ui.label("Dim:");
                 ui.label("X:");
@@ -199,6 +200,7 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                     pass.rect = Rect { x: 0, y: 0, w: IMG_SIZE, h: IMG_SIZE };
                 }
             });
+
             ui.horizontal_wrapped(| ui | {
                 ui.label("Align:");
                 if ui.button("Left").clicked() {
@@ -220,6 +222,7 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                     pass.rect.y = IMG_SIZE - pass.rect.h;
                 }
             });
+            
             ui.horizontal_wrapped(| ui | {
                 ui.checkbox(&mut pass.round_rect, "Round");
                 if pass.round_rect {
@@ -228,6 +231,16 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                     ui.checkbox(&mut pass.round_rect_aa, "Anti-Alias");
                 }
             });
+
+            ui.horizontal_wrapped(| ui | {
+                ui.add(egui::DragValue::new(&mut pass.bevel_depth).range(-IMG_SIZE..=IMG_SIZE));
+                if pass.bevel_depth != 0 {
+                    ui.checkbox(&mut pass.bevel_ease_in, "Ease In");
+                    ui.checkbox(&mut pass.bevel_ease_out, "Ease Out");
+                    ui.checkbox(&mut pass.bevel_shadow, "Shadow Only");
+                }
+            });
+
             ui.separator();
 
             if add_full_width(ui, Button::new("Remove")).clicked() {

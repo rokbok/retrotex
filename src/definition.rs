@@ -1,7 +1,6 @@
-use std::fmt::Display;
-use std::hash::Hash;
+use std::{fmt::Display, hash::Hash};
 
-use glam::{FloatExt, Vec2, Vec3, Vec4};
+use glam::{FloatExt, Vec2, Vec3, Vec4, Vec4Swizzles as _};
 use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr, EnumString, VariantNames};
 
@@ -12,6 +11,11 @@ use crate::{IMG_SIZE, noise, util};
 use crate::color::Color;
 
 pub const DEFAULT_NAME: &str = "unnamed";
+
+const SQRT2HALF: f32 = 0.70710678118654752440084436210485;
+fn light_dir() -> Vec3 {
+    Vec3::new(1.0, 2.0, 3.0).normalize()
+}
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize, AsRefStr, EnumString, VariantNames)]
 pub enum BlendMode {
@@ -81,7 +85,6 @@ pub struct TexturePass {
     pub round_rect: bool,
     pub round_rect_radius: i32,
     pub round_rect_aa: bool,
-    pub bevel: bool,
     pub bevel_depth: i32,
     pub bevel_shadow: bool,
     pub bevel_ease_in: bool,
@@ -98,7 +101,7 @@ impl TexturePass {
         }
     }
     
-    fn apply(&self, dest: Vec3, x: i32, y: i32) -> Vec3 {
+    fn apply(&self, dest: Vec3, x: i32, y: i32, light_dir: Vec3) -> Vec3 {
         if !self.rect.contains(x, y) {
             return dest;
         }
@@ -126,6 +129,15 @@ impl TexturePass {
             src.w *= noise.saturate();
         }
 
+        let (mut bevel_dir, mut bevel_dist) = if self.bevel_depth != 0 {
+            let from_boundary = Vec4::new(gen_x as f32 + 0.5, gen_y as f32 + 0.5, (self.rect.w - gen_x) as f32 - 0.5, (self.rect.h - gen_y) as f32 - 0.5);
+            let smallest = util::retain_min_abs(from_boundary);
+            let ret = smallest.xy() - smallest.zw();
+            (ret.normalize_or_zero(), ret.abs().max_element())
+        } else {
+            (Vec2::ZERO, 0.0)
+        };
+
         if self.round_rect {
             let rad = (self.round_rect_radius + 2) as f32;
             let half_size = Vec2::new(0.5 * self.rect.w as f32, 0.5 * self.rect.h as f32);
@@ -140,6 +152,25 @@ impl TexturePass {
                 return dest;
             }
             src.w *= fact;
+
+            if self.bevel_depth != 0 {
+                let from_corner = rel.abs() - (half_size - Vec2::splat(rad));
+                if from_corner.cmpgt(Vec2::ZERO).all() {
+                    bevel_dir = from_corner.normalize_or_zero() * -rel.signum();
+                    bevel_dist = rad - from_corner.length();
+                }
+            }
+        }
+
+        if self.bevel_depth != 0 && bevel_dist < self.bevel_depth.abs() as f32 && bevel_dir.abs().cmpge(Vec2::splat(0.0001)).any() {
+            let normal = SQRT2HALF * Vec3::new(
+                -bevel_dir.x * self.bevel_depth.signum() as f32,
+                -bevel_dir.y * self.bevel_depth.signum() as f32,
+                1.0,
+            );
+            let light = normal.dot(light_dir).max(0.0);
+            let fact = light.remap(0.0, light_dir.z, 0.0, 1.0);
+            src *= Vec4::new(fact, fact, fact, 1.0);
         }
 
         self.blend_mode.apply(dest, src)
@@ -167,8 +198,7 @@ impl Default for TexturePass {
             round_rect: false,
             round_rect_radius: 10,
             round_rect_aa: false,
-            bevel: false,
-            bevel_depth: 5,
+            bevel_depth: 0,
             bevel_shadow: false,
             bevel_ease_in: false,
             bevel_ease_out: false,
@@ -195,8 +225,9 @@ impl TextureDefinition {
 
     pub fn generate_pixel(&self, x: i32, y: i32) -> Vec3 {
         let mut ret = Vec3::new(self.background.v[0], self.background.v[1], self.background.v[2]);
+        let light_dir = light_dir();
         for pass in &self.passes{
-            ret = pass.apply(ret, x, y);
+            ret = pass.apply(ret, x, y, light_dir);
         }
         ret
     }
