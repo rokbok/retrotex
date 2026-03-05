@@ -1,13 +1,13 @@
 use std::{fmt::Display, hash::{Hash, Hasher}};
 
-use glam::{FloatExt, Vec3, Vec4};
+use glam::{FloatExt, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr, EnumString, VariantNames};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
 
-use crate::noise;
+use crate::{IMG_SIZE, noise, util};
 
 pub const DEFAULT_NAME: &str = "unnamed";
 
@@ -99,19 +99,19 @@ impl Color {
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize, AsRefStr, EnumString, VariantNames)]
 pub enum BlendMode {
-    Normal,
+    Alpha,
     Additive,
     Multiply,
 }
 
 impl BlendMode {
     pub fn all() -> &'static [BlendMode] {
-        &[BlendMode::Normal, BlendMode::Additive, BlendMode::Multiply]
+        &[BlendMode::Alpha, BlendMode::Additive, BlendMode::Multiply]
     }
     
     fn apply(&self, bot: Vec3, top: Vec4) -> Vec3 {
         match self {
-            BlendMode::Normal => top.truncate() * top.w + bot * (1.0 - top.w),
+            BlendMode::Alpha => top.truncate() * top.w + bot * (1.0 - top.w),
             BlendMode::Additive => bot + top.truncate() * top.w,
             BlendMode::Multiply => bot * (top.truncate() * top.w + Vec3::splat(1.0 - top.w)),
         }
@@ -121,7 +121,7 @@ impl BlendMode {
 impl Display for BlendMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BlendMode::Normal => write!(f, "Normal"),
+            BlendMode::Alpha => write!(f, "Normal"),
             BlendMode::Additive => write!(f, "Additive"),
             BlendMode::Multiply => write!(f, "Multiply"),
         }
@@ -153,40 +153,43 @@ pub struct TexturePass {
     pub perlin_scale: i32,
     pub perlin_octaves: i32,
     pub perlin_seed: u32,
+    pub perlin_use_threshold: bool,
+    pub perlin_threshold: i32,
     pub white_noise: bool,
     pub white_noise_scale: i32,
     pub white_noise_seed: u32,
+    pub white_noise_use_threshold: bool,
+    pub white_noise_threshold: i32,
     pub blend_mode: BlendMode,
-    pub rect: Option<Rect>,
+    pub use_rect: bool,
+    pub rect: Rect,
+    pub round_rect: bool,
+    pub round_rect_radius: i32,
+    pub round_rect_aa: bool,
+    pub bevel: bool,
+    pub bevel_depth: i32,
+    pub bevel_shadow: bool,
+    pub bevel_ease_in: bool,
+    pub bevel_ease_out: bool,
 }
+
 impl TexturePass {
     pub fn new() -> Self {
         Self {
-            name: None,
             color: Color::random().with_alpha(0.5),
-            perlin: false,
-            perlin_scale: 10,
-            perlin_octaves: 4,
             perlin_seed: rand::random(),
-            white_noise: false,
-            white_noise_scale: 1,
             white_noise_seed: rand::random(),
-            blend_mode: BlendMode::Normal,
-            rect: None,
+            ..Default::default()
         }
     }
     
     fn apply(&self, dest: Vec3, x: i32, y: i32) -> Vec3 {
-        let inside_rect = match &self.rect {
-            Some(rect) => rect.contains(x, y),
-            None => true,
-        };
-        if !inside_rect{
+        if self.use_rect && !self.rect.contains(x, y) {
             return dest;
         }
 
-        let (gen_x, gen_y) = if let Some(rect) = &self.rect {
-            (x - rect.x, y - rect.y)
+        let (gen_x, gen_y) = if self.use_rect {
+            (x - self.rect.x, y - self.rect.y)
         } else {
             (x, y)
         };
@@ -195,12 +198,38 @@ impl TexturePass {
 
         if self.perlin {
             let noise_scale = 0.002 * self.perlin_scale as f32;
-            let noise = noise::fbm2(noise_scale * gen_x as f32, noise_scale * gen_y as f32, self.perlin_octaves as u32, 2.0, 0.5, self.perlin_seed as f32);
-            src.w *= noise.remap(-1.0, 1.0, 0.0, 1.0);
+            let mut noise = noise::fbm2(noise_scale * gen_x as f32, noise_scale * gen_y as f32, self.perlin_octaves as u32, 2.0, 0.5, self.perlin_seed as f32);
+            noise = noise.remap(-1.0, 1.0, 0.0, 1.0);
+            if self.perlin_use_threshold {
+                noise = if noise >= (self.perlin_threshold as f32 / 100.0) { 1.0 } else { 0.0 };
+            }
+            src.w *= noise.saturate();
         }
 
         if self.white_noise {
-            src.w *= noise::white_noise(gen_x, gen_y, self.white_noise_scale, self.white_noise_seed);
+            let mut noise = noise::white_noise(gen_x, gen_y, self.white_noise_scale, self.white_noise_seed);
+            if self.white_noise_use_threshold {
+                noise = if noise >= (self.white_noise_threshold as f32 / 100.0) { 1.0 } else { 0.0 };
+            }
+            src.w *= noise.saturate();
+        }
+
+        if self.use_rect {
+            if self.round_rect {
+                let rad = (self.round_rect_radius + 2) as f32;
+                let half_size = Vec2::new(0.5 * self.rect.w as f32, 0.5 * self.rect.h as f32);
+                let rel = Vec2::new(gen_x as f32, gen_y as f32) + 0.5 - half_size;
+                let d = util::box_sdf(rel, half_size - rad) - rad;
+                let fact = if self.round_rect_aa {
+                    d.remap(0.5, -0.5, 0.0, 1.0).saturate()
+                } else {
+                    if d > 0.0 { 0.0 } else { 1.0 }
+                };
+                if fact <= 0.0 {
+                    return dest;
+                }
+                src.w *= fact;
+            }
         }
 
         self.blend_mode.apply(dest, src)
@@ -216,11 +245,24 @@ impl Default for TexturePass {
             perlin_seed: 0,
             perlin_scale: 10,
             perlin_octaves: 4,
+            perlin_use_threshold: false,
+            perlin_threshold: 50,
             white_noise: false,
             white_noise_scale: 1,
             white_noise_seed: 0,
-            blend_mode: BlendMode::Normal,
-            rect: None,
+            white_noise_use_threshold: false,
+            white_noise_threshold: 50,
+            blend_mode: BlendMode::Alpha,
+            use_rect: false,
+            rect: Rect { x: IMG_SIZE / 4, y: IMG_SIZE / 4, w: IMG_SIZE / 2, h: IMG_SIZE / 2 },
+            round_rect: false,
+            round_rect_radius: 10,
+            round_rect_aa: false,
+            bevel: false,
+            bevel_depth: 5,
+            bevel_shadow: false,
+            bevel_ease_in: false,
+            bevel_ease_out: false,
         }
     }
 }

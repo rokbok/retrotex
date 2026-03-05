@@ -3,7 +3,7 @@ use std::{hash::{DefaultHasher, Hasher}, str::FromStr, convert::AsRef, fmt::Writ
 use egui::Button;
 use strum::VariantNames;
 
-use crate::{IMG_SIZE, definition::{self, TextureDefinition, TexturePass}};
+use crate::{IMG_SIZE, definition::{TextureDefinition, TexturePass}};
 
 pub enum PassOperation { Remove(usize) }
 
@@ -80,6 +80,10 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                     ui.add(egui::DragValue::new(&mut pass.perlin_scale).range(1..=400));
                     ui.label("Octaves:");
                     ui.add(egui::DragValue::new(&mut pass.perlin_octaves));
+                    ui.checkbox(&mut pass.perlin_use_threshold, "Threshold");
+                    if pass.perlin_use_threshold {
+                        ui.add(egui::DragValue::new(&mut pass.perlin_threshold).range(0..=100));
+                    }
                     if ui.button("Re-seed").clicked() {
                         pass.perlin_seed = rand::random();
                     }
@@ -90,47 +94,60 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                 if pass.white_noise {
                     ui.label("Scale:");
                     ui.add(egui::DragValue::new(&mut pass.white_noise_scale).range(1..=(IMG_SIZE/2)));
+                    ui.checkbox(&mut pass.white_noise_use_threshold, "Threshold");
+                    if pass.white_noise_use_threshold {
+                        ui.add(egui::DragValue::new(&mut pass.white_noise_threshold).range(0..=100));
+                    }
                     if ui.button("Re-seed").clicked() {
                         pass.white_noise_seed = rand::random();
                     }
                 }
             });
-            ui.horizontal(| ui | {
-                ui.label("Blend:");
-                add_enum_dropdown(ui, &mut pass.blend_mode, "blend_mode", pass_idx, false);
-            });
 
-            let mut use_rect = pass.rect.is_some();
-            if ui.checkbox(&mut use_rect, "Use Rect").changed() {
-                if use_rect {
-                    pass.rect = Some(definition::Rect::new(IMG_SIZE / 4, IMG_SIZE / 4, IMG_SIZE / 2, IMG_SIZE / 2));
-                } else {
-                    pass.rect = None;
-                }
-            }
             ui.horizontal_wrapped(| ui | {
-                if let Some(rect) = &mut pass.rect {
+                ui.checkbox(&mut pass.use_rect, "Rect");
+                if pass.use_rect {
                     ui.label("X:");
-                    ui.add(egui::DragValue::new(&mut rect.x).range(0..=(IMG_SIZE - 1)));
+                    ui.add(egui::DragValue::new(&mut pass.rect.x).range(0..=(IMG_SIZE - 1)));
                     ui.label("Y:");
-                    ui.add(egui::DragValue::new(&mut rect.y).range(0..=(IMG_SIZE - 1)));
+                    ui.add(egui::DragValue::new(&mut pass.rect.y).range(0..=(IMG_SIZE - 1)));
                     ui.label("W:");
-                    ui.add(egui::DragValue::new(&mut rect.w).range(1..=IMG_SIZE));
+                    ui.add(egui::DragValue::new(&mut pass.rect.w).range(1..=IMG_SIZE));
                     ui.label("H:");
-                    ui.add(egui::DragValue::new(&mut rect.h).range(1..=IMG_SIZE));
+                    ui.add(egui::DragValue::new(&mut pass.rect.h).range(1..=IMG_SIZE));
 
-                    let mut r = rect.x + rect.w;
+                    let mut r = pass.rect.x + pass.rect.w;
                     ui.label("R:");
                     if ui.add(egui::DragValue::new(&mut r).range(1..=(IMG_SIZE))).changed() {
-                        rect.x = r - rect.w;
+                        pass.rect.x = r - pass.rect.w;
                     }
-                    let mut b = rect.y + rect.h;
+                    let mut b = pass.rect.y + pass.rect.h;
                     ui.label("B:");
                     if ui.add(egui::DragValue::new(&mut b).range(1..=(IMG_SIZE))).changed() {
-                        rect.y = b - rect.h;
+                        pass.rect.y = b - pass.rect.h;
+                    }
+                    if ui.button("Square").clicked() {
+                        pass.rect.h = pass.rect.w;
                     }
                 }
             });
+
+            if pass.use_rect {
+                ui.horizontal_wrapped(| ui | {
+                    ui.checkbox(&mut pass.round_rect, "Round Rect");
+                    if pass.round_rect {
+                        ui.label("Radius:");
+                        ui.add(egui::DragValue::new(&mut pass.round_rect_radius).range(0..=(pass.rect.w.min(pass.rect.h) / 2)));
+                        ui.checkbox(&mut pass.round_rect_aa, "Anti-Alias");
+                    }
+                });
+            }
+
+            ui.horizontal(| ui | {
+                ui.label("Blend:");
+                add_enum_dropdown(ui, &mut pass.blend_mode, "blend_mode", pass_idx, true);
+            });
+
             if add_full_width(ui, Button::new("Remove")).clicked() {
                 pass_op = Some(PassOperation::Remove(pass_idx));
             }
