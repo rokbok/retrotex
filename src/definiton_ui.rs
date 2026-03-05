@@ -3,7 +3,7 @@ use std::{convert::AsRef, fmt::Write, hash::{DefaultHasher, Hasher}, mem::swap, 
 use egui::Button;
 use strum::VariantNames;
 
-use crate::{IMG_SIZE, definition::{Color, Rect, TextureDefinition, TexturePass}};
+use crate::{IMG_SIZE, definition::{Rect, TextureDefinition, TexturePass}, color::Color};
 
 pub enum PassOperation { Remove(usize) }
 

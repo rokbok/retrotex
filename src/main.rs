@@ -14,6 +14,7 @@ pub mod definiton_ui;
 pub mod load_save_undo;
 pub mod util;
 pub mod noise;
+pub mod color;
 
 pub const IMG_SIZE: i32 = 256;
 const AUTO_SAVE_DELAY_MILLIS: u64 = 200;
