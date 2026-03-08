@@ -1,5 +1,5 @@
 use std::hash::{Hash, Hasher};
-use glam::Vec4;
+use glam::{Vec3, Vec4};
 use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Copy)]
@@ -40,6 +40,12 @@ impl From<Color> for Vec4 {
     }
 }
 
+impl From<Vec3> for Color {
+    fn from(vec: Vec3) -> Self {
+        Self { v: [vec.x, vec.y, vec.z, 1.0] }
+    }
+}
+
 impl Color {
     pub fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
         Self { v: [r, g, b, a] }
@@ -47,7 +53,7 @@ impl Color {
 
     /// Convert a single sRGB channel in [0,1] to linear space.
     /// Uses the standard IEC 61966-2-1 / sRGB transfer function.
-    fn srgb_channel_to_linear(c: f32) -> f32 {
+    pub fn srgb_channel_to_linear(c: f32) -> f32 {
         if c <= 0.04045 {
             c / 12.92
         } else {
@@ -57,7 +63,7 @@ impl Color {
 
     /// Convert a single linear channel in [0,1] to sRGB space.
     /// Inverse of `srgb_channel_to_linear` using the standard sRGB transfer function.
-    fn linear_channel_to_srgb(c: f32) -> f32 {
+    pub fn linear_channel_to_srgb(c: f32) -> f32 {
         if c <= 0.0031308 {
             c * 12.92
         } else {

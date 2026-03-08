@@ -149,9 +149,6 @@ impl TexturePass {
             } else {
                 if d > 0.0 { 0.0 } else { 1.0 }
             };
-            if fact <= 0.0 {
-                return;
-            }
             src.w *= fact;
 
             if self.bevel_size != 0 {

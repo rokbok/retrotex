@@ -2652,6 +2652,7 @@ dependencies = [
  "env_logger",
  "glam",
  "log",
+ "png",
  "rand 0.10.0",
  "serde",
  "serde_json",

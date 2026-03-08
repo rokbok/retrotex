@@ -121,6 +121,12 @@ impl ExampleApp {
         } else {
             info!("Texture {} saved successfully", self.def.name);
         }
+
+        if let Err(e) = load_save_undo::write_images(&self.sample_data, &self.def.name) {
+            error!("Failed to write output images for texture {}: {}", self.def.name, e);
+        } else {
+            info!("Output images for texture {} written successfully", self.def.name);
+        }
     }
 }
 
