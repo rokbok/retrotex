@@ -1,10 +1,11 @@
 
-use std::time::{Duration, Instant};
+use std::{fmt::Write as _, time::{Duration, Instant}};
 
 use eframe::egui;
 use egui::{Color32, ColorImage, TextureHandle};
+use strum_macros::{AsRefStr, EnumString, VariantNames};
 
-use crate::{load_save_undo::LoadSaveUndo, util::quick_hash};
+use crate::{definition::GeneratedSample, load_save_undo::LoadSaveUndo, util::{add_enum_dropdown, quick_hash}};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
@@ -16,7 +17,8 @@ pub mod util;
 pub mod noise;
 pub mod color;
 
-pub const IMG_SIZE: i32 = 256;
+pub const IMG_SIZE: i32 = 128;
+pub const IMG_PIXEL_COUNT: usize = IMG_SIZE as usize * IMG_SIZE as usize;
 const AUTO_SAVE_DELAY_MILLIS: u64 = 200;
 
 const PREVIEW_TEX_OPTIONS: egui::TextureOptions = egui::TextureOptions {
@@ -30,13 +32,33 @@ pub fn idx(x: i32, y: i32) -> usize {
     (y * IMG_SIZE + x) as usize
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Default, AsRefStr, EnumString, VariantNames)]
+enum DisplayMode { 
+    #[default]
+    Albedo,
+    Depth,
+}
+
+#[derive(Debug, Default)]
+struct DisplaySettings {
+    mode: DisplayMode,
+}
+
+
+struct TextureHandleSet {
+    albedo: TextureHandle,
+    depth: TextureHandle,
+}
+
 struct ExampleApp {
     def: definition::TextureDefinition,
     tmp_str: String,
-    img_texture: Option<TextureHandle>,
+    textures: Option<TextureHandleSet>,
+    sample_data: Box<[GeneratedSample]>,
     auto_save_at: Option<Instant>,
     load_save_undo: LoadSaveUndo,
     clipboard: arboard::Clipboard,
+    display_settings: DisplaySettings,
 }
 
 impl ExampleApp {
@@ -47,32 +69,45 @@ impl ExampleApp {
         let ret = Self {
             def,
             tmp_str: String::new(),
-            img_texture: None,
+            textures: None,
+            sample_data: vec![GeneratedSample::default(); IMG_PIXEL_COUNT].into_boxed_slice(),
             auto_save_at: None,
             load_save_undo,
             clipboard: arboard::Clipboard::new().expect("Failed to initialize clipboard"),
+            display_settings: DisplaySettings::default(),
         };
 
         ret
     }
 
     fn regenerate(&mut self, ctx: Option<&egui::Context>) {
-        let tex_available = self.img_texture.is_some() || ctx.is_some();
+        let tex_available = self.textures.is_some() || ctx.is_some();
         if !tex_available {
             return;
 
         }
-        let mut img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::BLACK);
+        let mut albedo_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
+        let mut depth_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
+
         for y in 0..IMG_SIZE {
             for x in 0..IMG_SIZE {
-                let c = self.def.generate_pixel(x, y);
-                img.pixels[idx(x, y)] = egui::Rgba::from_rgba_unmultiplied(c.x.clamp(0.0, 1.0), c.y.clamp(0.0, 1.0), c.z.clamp(0.0, 1.0), 1.0).into();
+                let s = self.def.generate_pixel(x, y);
+                albedo_img.pixels[idx(x, y)] = egui::Rgba::from_rgba_unmultiplied(s.albedo.x.clamp(0.0, 1.0), s.albedo.y.clamp(0.0, 1.0), s.albedo.z.clamp(0.0, 1.0), 1.0).into();
+                let d = (s.depth + 128.0).round().clamp(0.0, 255.0) as u8;
+                depth_img.pixels[idx(x, y)] = egui::Rgba::from_srgba_unmultiplied(d, d, d, 255).into();
+                self.sample_data[idx(x, y)] = s;
             }
         }
-        if let Some(tex) = &mut self.img_texture {
-            tex.set(img, PREVIEW_TEX_OPTIONS);
+
+        if let Some(tex) = &mut self.textures {
+            tex.albedo.set(albedo_img, PREVIEW_TEX_OPTIONS);
+            tex.depth.set(depth_img, PREVIEW_TEX_OPTIONS);
+            // Data already was written into the correct place
         } else if let Some(ctx) = ctx {
-            self.img_texture = Some(ctx.load_texture("preview", img, PREVIEW_TEX_OPTIONS));
+            self.textures = Some(TextureHandleSet {
+                albedo: ctx.load_texture("preview_albedo", albedo_img, PREVIEW_TEX_OPTIONS),
+                depth: ctx.load_texture("preview_depth", depth_img, PREVIEW_TEX_OPTIONS),
+            });
         }
     }
 
@@ -91,7 +126,7 @@ impl ExampleApp {
 
 impl eframe::App for ExampleApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let mut regen_needed = self.img_texture.is_none();
+        let mut regen_needed = self.textures.is_none();
         let closing = ctx.input(|i| {
             if i.key_pressed(egui::Key::F10) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -113,6 +148,7 @@ impl eframe::App for ExampleApp {
 
         ctx.set_pixels_per_point(1.5);
 
+ 
         egui::SidePanel::right("right_panel")
             .default_width(400.0)
             .show(ctx, |ui| {
@@ -132,13 +168,46 @@ impl eframe::App for ExampleApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.img_texture.as_ref().expect("Texture not initialized yet?");
-            if let Some(tex) = &self.img_texture {
-                let available = ui.available_size();
-                let mnsz = available.x.min(available.y);
-                let iscale = (mnsz / (IMG_SIZE as f32)).floor().max(1.0) as i32;
-                let display_size = IMG_SIZE as f32 * iscale as f32;
-                ui.add_sized(available, egui::Image::new(tex).fit_to_exact_size(egui::Vec2::new(display_size, display_size)));
+            ui.horizontal(| ui | {
+                ui.label("Display Mode:");
+                add_enum_dropdown(ui, &mut self.display_settings.mode, "display_mode", 0, false);
+            });
+            self.textures.as_ref().expect("Texture not initialized yet?");
+            if let Some(tex) = &self.textures {
+                ui.centered_and_justified(| ui | {
+                    let available = ui.available_rect_before_wrap();
+                    let mnsz = available.width().min(available.height());
+                    let iscale = (mnsz / (IMG_SIZE as f32)).floor().max(1.0) as i32;
+                    let display_size = IMG_SIZE as f32 * iscale as f32;
+                    let tex = match self.display_settings.mode {
+                        DisplayMode::Albedo => &tex.albedo,
+                        DisplayMode::Depth => &tex.depth,
+                    };
+                    let sz = egui::Vec2::new(display_size, display_size);
+                    let rect = egui::Rect::from_center_size(available.center(), sz);
+                    let resp = ui.allocate_rect(rect, egui::Sense::hover());
+                    let img = egui::Image::new(tex)
+                        .fit_to_exact_size(sz)
+                        .sense(egui::Sense::hover());
+                    img.paint_at(ui, rect);
+                    if let Some(hover_pos) = resp.hover_pos() {
+                        resp.on_hover_ui_at_pointer(| ui | {
+                            let x = ((hover_pos.x - rect.min.x) / iscale as f32).floor() as i32;
+                            let y = ((hover_pos.y - rect.min.y) / iscale as f32).floor() as i32;
+                            write!(self.tmp_str, "Hovering at ({:.1}, {:.1})", x, y).unwrap();
+                            if x >= 0 && x < IMG_SIZE && y >= 0 && y < IMG_SIZE {
+                                let s = self.sample_data[idx(x, y)];
+                                self.tmp_str.clear();
+                                write!(self.tmp_str, "Pixel ({}, {})", x, y).unwrap();
+                                write!(self.tmp_str, "\nAlbedo: ({:.3}, {:.3}, {:.3})", s.albedo.x, s.albedo.y, s.albedo.z).unwrap();
+                                write!(self.tmp_str, "\nDepth: {:.3}", s.depth).unwrap();
+                                ui.label(&self.tmp_str);
+                            } else {
+                                ui.label("Outside");
+                            }
+                        });
+                    }
+                });
             }
         });
 

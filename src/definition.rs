@@ -85,7 +85,8 @@ pub struct TexturePass {
     pub round_rect: bool,
     pub round_rect_radius: i32,
     pub round_rect_aa: bool,
-    pub bevel_depth: i32,
+    pub bevel_size: i32,
+    pub bevel_steepness: i32,
     pub bevel_shadow: bool,
     pub bevel_ease_in: bool,
     pub bevel_ease_out: bool,
@@ -101,9 +102,9 @@ impl TexturePass {
         }
     }
     
-    fn apply(&self, dest: Vec3, x: i32, y: i32, light_dir: Vec3) -> Vec3 {
+    fn apply(&self, dest: &mut Vec3, dest_d: &mut f32, x: i32, y: i32, light_dir: Vec3) {
         if !self.rect.contains(x, y) {
-            return dest;
+            return;
         }
 
         let gen_x = x - self.rect.x;
@@ -129,7 +130,7 @@ impl TexturePass {
             src.w *= noise.saturate();
         }
 
-        let (mut bevel_dir, mut bevel_dist) = if self.bevel_depth != 0 {
+        let (mut bevel_dir, mut bevel_dist) = if self.bevel_size != 0 {
             let from_boundary = Vec4::new(gen_x as f32 + 0.5, gen_y as f32 + 0.5, (self.rect.w - gen_x) as f32 - 0.5, (self.rect.h - gen_y) as f32 - 0.5);
             let smallest = util::retain_min_abs(from_boundary);
             let ret = smallest.xy() - smallest.zw();
@@ -149,11 +150,11 @@ impl TexturePass {
                 if d > 0.0 { 0.0 } else { 1.0 }
             };
             if fact <= 0.0 {
-                return dest;
+                return;
             }
             src.w *= fact;
 
-            if self.bevel_depth != 0 {
+            if self.bevel_size != 0 {
                 let from_corner = rel.abs() - (half_size - Vec2::splat(rad));
                 if from_corner.cmpgt(Vec2::ZERO).all() {
                     bevel_dir = from_corner.normalize_or_zero() * -rel.signum();
@@ -162,10 +163,10 @@ impl TexturePass {
             }
         }
 
-        if self.bevel_depth != 0 && bevel_dist < self.bevel_depth.abs() as f32 && bevel_dir.abs().cmpge(Vec2::splat(0.0001)).any() {
+        if self.bevel_size != 0 && bevel_dist < self.bevel_size.abs() as f32 && bevel_dir.abs().cmpge(Vec2::splat(0.0001)).any() {
             let normal = SQRT2HALF * Vec3::new(
-                -bevel_dir.x * self.bevel_depth.signum() as f32,
-                -bevel_dir.y * self.bevel_depth.signum() as f32,
+                -bevel_dir.x * self.bevel_size.signum() as f32,
+                -bevel_dir.y * self.bevel_size.signum() as f32,
                 1.0,
             );
             let light = normal.dot(light_dir).max(0.0);
@@ -173,7 +174,17 @@ impl TexturePass {
             src *= Vec4::new(fact, fact, fact, 1.0);
         }
 
-        self.blend_mode.apply(dest, src)
+        if self.bevel_size != 0 && self.bevel_steepness != 0 {
+            let bdepth = if self.bevel_steepness > 0 {
+                (self.bevel_size * self.bevel_steepness) as f32
+            } else {
+                self.bevel_size as f32 / (-self.bevel_steepness as f32)
+            };
+            let bt = ((bevel_dist + 0.5) / self.bevel_size as f32).saturate();
+            *dest_d += bt  * bdepth;
+        }
+
+        *dest = self.blend_mode.apply(*dest, src);
     }
 }
 
@@ -198,7 +209,8 @@ impl Default for TexturePass {
             round_rect: false,
             round_rect_radius: 10,
             round_rect_aa: false,
-            bevel_depth: 0,
+            bevel_size: 0,
+            bevel_steepness: -1,
             bevel_shadow: false,
             bevel_ease_in: false,
             bevel_ease_out: false,
@@ -207,6 +219,12 @@ impl Default for TexturePass {
 }
 
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GeneratedSample {
+    pub albedo: Vec3,
+    pub depth: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct TextureDefinition {
     #[serde(skip)] // This will be the filename
@@ -214,6 +232,7 @@ pub struct TextureDefinition {
     pub background: Color,
     pub passes: Vec<TexturePass>,
 }
+
 impl TextureDefinition {
     pub fn new(name: &str) -> Self {
         Self {
@@ -223,11 +242,14 @@ impl TextureDefinition {
         }
     }
 
-    pub fn generate_pixel(&self, x: i32, y: i32) -> Vec3 {
-        let mut ret = Vec3::new(self.background.v[0], self.background.v[1], self.background.v[2]);
+    pub fn generate_pixel(&self, x: i32, y: i32) -> GeneratedSample {
+        let mut ret = GeneratedSample {
+            albedo: Vec3::new(self.background.v[0], self.background.v[1], self.background.v[2]),
+            depth: 0.0,
+        };
         let light_dir = light_dir();
         for pass in &self.passes{
-            ret = pass.apply(ret, x, y, light_dir);
+            pass.apply(&mut ret.albedo, &mut ret.depth, x, y, light_dir);
         }
         ret
     }

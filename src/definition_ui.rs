@@ -1,41 +1,13 @@
-use std::{convert::AsRef, fmt::Write, hash::{DefaultHasher, Hasher}, mem::swap, str::FromStr};
+use std::{fmt::Write, mem::swap};
 
 use egui::Button;
-use strum::VariantNames;
-
-use crate::{IMG_SIZE, definition::{Rect, TextureDefinition, TexturePass}, color::Color};
+use crate::{IMG_SIZE, color::Color, definition::{Rect, TextureDefinition, TexturePass}, util::add_enum_dropdown};
 
 pub enum PassOperation { Remove(usize) }
 
 fn add_full_width<T: egui::Widget>(ui: &mut egui::Ui, widget: T) -> egui::Response {
     let available_width = ui.available_width();
     ui.add_sized([available_width, 0.0], widget)
-}
-
-pub fn add_enum_dropdown<T: AsRef<str> + FromStr + VariantNames>(ui: &mut egui::Ui, value: &mut T, hash_str: &str, hash_idx: usize, full_width: bool)
-where <T as FromStr>::Err: std::fmt::Debug
-{
-    let mut salt_hasher = DefaultHasher::new();
-    salt_hasher.write(hash_str.as_bytes());
-    salt_hasher.write("dropdown".as_bytes());
-    salt_hasher.write_u64(hash_idx as u64);
-    let combo_box_id = salt_hasher.finish();
-
-    let mut combo_box = egui::ComboBox::from_id_salt(combo_box_id)
-        .selected_text(value.as_ref());
-    if full_width {
-        combo_box = combo_box.width(ui.available_width());
-    }
-    combo_box.show_ui(ui, |ui| {
-            let mut selected = value.as_ref();
-            let mut changed = false;
-            for name in T::VARIANTS {
-                changed |= ui.selectable_value(&mut selected, name, *name).changed();
-            }
-            if changed {
-                *value = T::from_str(selected).expect("Selected value should always be valid");
-            }
-        });
 }
 
 pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut egui::Ui, clipboard: &mut arboard::Clipboard) {
@@ -233,8 +205,11 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
             });
 
             ui.horizontal_wrapped(| ui | {
-                ui.add(egui::DragValue::new(&mut pass.bevel_depth).range(-IMG_SIZE..=IMG_SIZE));
-                if pass.bevel_depth != 0 {
+                ui.label("Bevel:");
+                ui.add(egui::DragValue::new(&mut pass.bevel_size).range(-IMG_SIZE..=IMG_SIZE));
+                if pass.bevel_size != 0 {
+                    ui.label("Steepness:");
+                    ui.add(egui::DragValue::new(&mut pass.bevel_steepness).range(-100..=100));
                     ui.checkbox(&mut pass.bevel_ease_in, "Ease In");
                     ui.checkbox(&mut pass.bevel_ease_out, "Ease Out");
                     ui.checkbox(&mut pass.bevel_shadow, "Shadow Only");
