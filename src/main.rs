@@ -10,7 +10,7 @@ use crate::{load_save_undo::LoadSaveUndo, util::quick_hash};
 use log::{debug, error, log_enabled, info, warn, trace};
 
 pub mod definition;
-pub mod definiton_ui;
+pub mod definition_ui;
 pub mod load_save_undo;
 pub mod util;
 pub mod noise;
@@ -117,7 +117,7 @@ impl eframe::App for ExampleApp {
             .default_width(400.0)
             .show(ctx, |ui| {
                 let old_hash = quick_hash(&self.def);
-                definiton_ui::definition_ui(&mut self.def, &mut self.tmp_str, ui, &mut self.clipboard);
+                definition_ui::definition_ui(&mut self.def, &mut self.tmp_str, ui, &mut self.clipboard);
                 let new_hash = quick_hash(&self.def);
                 let changed = old_hash != new_hash;
                 if changed {
