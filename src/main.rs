@@ -1,6 +1,7 @@
 
 use std::{fmt::Write as _, time::{Duration, Instant}};
 
+use clap::Parser as _;
 use eframe::egui;
 use egui::{Color32, ColorImage, TextureHandle};
 use strum_macros::{AsRefStr, EnumString, VariantNames};
@@ -59,10 +60,12 @@ struct ExampleApp {
     load_save_undo: LoadSaveUndo,
     clipboard: arboard::Clipboard,
     display_settings: DisplaySettings,
+    output_dir: String,
+    initial_generation_done: bool,
 }
 
 impl ExampleApp {
-    fn new() -> Self {
+    fn new(output_dir: String) -> Self {
         let mut load_save_undo = LoadSaveUndo::new();
         let def = load_save_undo.load_by_name_or_create(definition::DEFAULT_NAME);
 
@@ -75,6 +78,8 @@ impl ExampleApp {
             load_save_undo,
             clipboard: arboard::Clipboard::new().expect("Failed to initialize clipboard"),
             display_settings: DisplaySettings::default(),
+            output_dir,
+            initial_generation_done: false,
         };
 
         ret
@@ -97,6 +102,12 @@ impl ExampleApp {
                 depth_img.pixels[idx(x, y)] = egui::Rgba::from_srgba_unmultiplied(d, d, d, 255).into();
                 self.sample_data[idx(x, y)] = s;
             }
+        }
+
+        if !self.initial_generation_done {
+            info!("Writing initial output images for texture {}...", self.def.name);
+            load_save_undo::write_images(&self.sample_data, &self.output_dir, &self.def.name).unwrap_or_else(|e| error!("Failed to write initial output images: {}", e));
+            self.initial_generation_done = true;
         }
 
         if let Some(tex) = &mut self.textures {
@@ -122,7 +133,7 @@ impl ExampleApp {
             info!("Texture {} saved successfully", self.def.name);
         }
 
-        if let Err(e) = load_save_undo::write_images(&self.sample_data, &self.def.name) {
+        if let Err(e) = load_save_undo::write_images(&self.sample_data, &self.output_dir, &self.def.name) {
             error!("Failed to write output images for texture {}: {}", self.def.name, e);
         } else {
             info!("Output images for texture {} written successfully", self.def.name);
@@ -228,10 +239,22 @@ impl eframe::App for ExampleApp {
     }
 }
 
+#[derive(clap::Parser)]
+struct CommandLineArgs {
+    #[arg(short, long)]
+    output: Option<String>,
+}
+
+
+
 fn main() {
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
         .init();
+
+    let args = CommandLineArgs::parse();
+    let output = args.output.unwrap_or_else(|| "output".to_string());
+    info!("Using output directory: {}", output);
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size((1600.0, 900.0)),
@@ -241,6 +264,6 @@ fn main() {
     eframe::run_native(
         ExampleApp::name(),
         native_options,
-        Box::new(|_| Ok(Box::new(ExampleApp::new()))),
+        Box::new(|_| Ok(Box::new(ExampleApp::new(output)))),
     ).expect("Error running app")
 }

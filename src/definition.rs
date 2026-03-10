@@ -68,6 +68,7 @@ impl Rect {
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct TexturePass {
     pub name: Option<String>,
+    pub enabled: bool,
     pub color: Color,
     pub perlin: bool,
     pub perlin_scale: i32,
@@ -177,8 +178,8 @@ impl TexturePass {
             } else {
                 self.bevel_size as f32 / (-self.bevel_steepness as f32)
             };
-            let bt = ((bevel_dist + 0.5) / self.bevel_size as f32).saturate();
-            *dest_d += bt  * bdepth;
+            let bt = ((bevel_dist + 0.5) / self.bevel_size as f32).abs().saturate();
+            *dest_d += bt * bdepth;
         }
 
         *dest = self.blend_mode.apply(*dest, src);
@@ -189,6 +190,7 @@ impl Default for TexturePass {
     fn default() -> Self {
         Self {
             name: None,
+            enabled: true,
             color: Color::from_hex("#f48a71").unwrap(),
             perlin: false,
             perlin_seed: 0,
@@ -246,7 +248,9 @@ impl TextureDefinition {
         };
         let light_dir = light_dir();
         for pass in &self.passes{
-            pass.apply(&mut ret.albedo, &mut ret.depth, x, y, light_dir);
+            if pass.enabled {
+                pass.apply(&mut ret.albedo, &mut ret.depth, x, y, light_dir);
+            }
         }
         ret
     }

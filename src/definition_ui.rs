@@ -44,6 +44,8 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                 pass.name = None;
             }
 
+            ui.checkbox(&mut pass.enabled, "Enabled");
+
             ui.horizontal_wrapped(| ui | {
                 ui.color_edit_button_rgba_unmultiplied(&mut pass.color.v);
                 tmp_str.clear();

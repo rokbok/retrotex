@@ -3,13 +3,11 @@ use std::{fs::File, io::BufWriter, path::Path};
 use crate::{IMG_PIXEL_COUNT, color::Color, definition::{self, TextureDefinition}};
 
 const FILE_LOCATION: &str = "textures";
-const OUTPUT_LOCATION: &str = "output";
 const UNDO_LIMIT: usize = 1000;
 
 use glam::FloatExt;
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
-use png::ScaledFloat;
 
 pub struct LoadSaveUndo {
     loaded: Option<String>,
@@ -100,8 +98,8 @@ impl LoadSaveUndo {
 }
 
 
-pub fn write_images(data: &[definition::GeneratedSample], name: &str) -> Result<(), String> {
-    let dir = Path::new(OUTPUT_LOCATION);
+pub fn write_images(data: &[definition::GeneratedSample], out_dir: &str, name: &str) -> Result<(), String> {
+    let dir = Path::new(out_dir);
     std::fs::create_dir_all(dir).map_err(|e| format!("Failed to create output directory: {}", e))?;
 
     let mut buf = vec![0u8; crate::IMG_PIXEL_COUNT * 3];
@@ -109,6 +107,7 @@ pub fn write_images(data: &[definition::GeneratedSample], name: &str) -> Result<
     // Albedo
     {
         let albedo_path = dir.join(format!("{}_albedo.png", name));
+        info!("Writing albedo image to {}", albedo_path.display());
         let file = File::create(albedo_path).map_err(|e| format!("Failed to create albedo image file: {}", e))?;
         let mut encoder = png::Encoder::new(BufWriter::new(file), crate::IMG_SIZE as u32, crate::IMG_SIZE as u32);
         encoder.set_color(png::ColorType::Rgb);
@@ -132,11 +131,11 @@ pub fn write_images(data: &[definition::GeneratedSample], name: &str) -> Result<
         let mut encoder = png::Encoder::new(BufWriter::new(file), crate::IMG_SIZE as u32, crate::IMG_SIZE as u32);
         encoder.set_color(png::ColorType::Grayscale);
         encoder.set_depth(png::BitDepth::Sixteen);
-        encoder.set_source_gamma(ScaledFloat::new(1.0));
+        // encoder.set_source_gamma(ScaledFloat::new(1.0));
 
         let mut writer = encoder.write_header().map_err(|e| format!("Failed to write PNG header: {}", e))?;
         for (i, sample) in data.iter().enumerate() {
-            let enc = (sample.depth + 128.0).mul_add(256.0, 0.5) as u16;
+            let enc = (sample.depth + 64.0).mul_add(512.0, 0.5) as u16;
             if i == 2000 || i == 0 {
                 info!("Encoding depth value {} to {}", sample.depth, enc);
             }
