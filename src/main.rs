@@ -4,9 +4,10 @@ use std::{fmt::Write as _, time::{Duration, Instant}};
 use clap::Parser as _;
 use eframe::egui;
 use egui::{Color32, ColorImage, TextureHandle};
+use glam::FloatExt as _;
 use strum_macros::{AsRefStr, EnumString, VariantNames};
 
-use crate::{definition::GeneratedSample, load_save_undo::LoadSaveUndo, util::{add_enum_dropdown, quick_hash}};
+use crate::{load_save_undo::LoadSaveUndo, processing::TextureLayers, util::{add_enum_dropdown, quick_hash}};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
@@ -17,6 +18,7 @@ pub mod load_save_undo;
 pub mod util;
 pub mod noise;
 pub mod color;
+pub mod processing;
 
 pub const IMG_SIZE: i32 = 128;
 pub const IMG_PIXEL_COUNT: usize = IMG_SIZE as usize * IMG_SIZE as usize;
@@ -38,6 +40,7 @@ enum DisplayMode {
     #[default]
     Albedo,
     Depth,
+    Normal,
 }
 
 #[derive(Debug, Default)]
@@ -49,13 +52,14 @@ struct DisplaySettings {
 struct TextureHandleSet {
     albedo: TextureHandle,
     depth: TextureHandle,
+    normal: TextureHandle,
 }
 
 struct ExampleApp {
     def: definition::TextureDefinition,
     tmp_str: String,
     textures: Option<TextureHandleSet>,
-    sample_data: Box<[GeneratedSample]>,
+    layers: TextureLayers,
     auto_save_at: Option<Instant>,
     load_save_undo: LoadSaveUndo,
     clipboard: arboard::Clipboard,
@@ -73,7 +77,7 @@ impl ExampleApp {
             def,
             tmp_str: String::new(),
             textures: None,
-            sample_data: vec![GeneratedSample::default(); IMG_PIXEL_COUNT].into_boxed_slice(),
+            layers: TextureLayers::default(),
             auto_save_at: None,
             load_save_undo,
             clipboard: arboard::Clipboard::new().expect("Failed to initialize clipboard"),
@@ -93,31 +97,48 @@ impl ExampleApp {
         }
         let mut albedo_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
         let mut depth_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
+        let mut normal_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
 
         for y in 0..IMG_SIZE {
             for x in 0..IMG_SIZE {
                 let s = self.def.generate_pixel(x, y);
+
                 albedo_img.pixels[idx(x, y)] = egui::Rgba::from_rgba_unmultiplied(s.albedo.x.clamp(0.0, 1.0), s.albedo.y.clamp(0.0, 1.0), s.albedo.z.clamp(0.0, 1.0), 1.0).into();
+
                 let d = (s.depth + 128.0).round().clamp(0.0, 255.0) as u8;
                 depth_img.pixels[idx(x, y)] = egui::Rgba::from_srgba_unmultiplied(d, d, d, 255).into();
-                self.sample_data[idx(x, y)] = s;
+
+                self.layers.albedo[idx(x, y)] = s.albedo;
+                self.layers.depth[idx(x, y)] = s.depth;
+            }
+        }
+
+        self.layers.recalculate();
+
+        for y in 0..IMG_SIZE {
+            for x in 0..IMG_SIZE {
+                let n = self.layers.normal[idx(x, y)];
+                normal_img.pixels[idx(x, y)] = egui::Rgba::from_rgba_unmultiplied(n.x.mul_add(0.5, 0.5).saturate(), n.y.mul_add(0.5, 0.5).saturate(), n.z.saturate(), 1.0).into();
             }
         }
 
         if !self.initial_generation_done {
             info!("Writing initial output images for texture {}...", self.def.name);
-            load_save_undo::write_images(&self.sample_data, &self.output_dir, &self.def.name).unwrap_or_else(|e| error!("Failed to write initial output images: {}", e));
+            load_save_undo::write_images(&self.layers, &self.output_dir, &self.def.name).unwrap_or_else(|e| error!("Failed to write initial output images: {}", e));
             self.initial_generation_done = true;
         }
 
         if let Some(tex) = &mut self.textures {
             tex.albedo.set(albedo_img, PREVIEW_TEX_OPTIONS);
             tex.depth.set(depth_img, PREVIEW_TEX_OPTIONS);
+            tex.normal.set(normal_img, PREVIEW_TEX_OPTIONS);
+
             // Data already was written into the correct place
         } else if let Some(ctx) = ctx {
             self.textures = Some(TextureHandleSet {
                 albedo: ctx.load_texture("preview_albedo", albedo_img, PREVIEW_TEX_OPTIONS),
                 depth: ctx.load_texture("preview_depth", depth_img, PREVIEW_TEX_OPTIONS),
+                normal: ctx.load_texture("preview_normal", normal_img, PREVIEW_TEX_OPTIONS),
             });
         }
     }
@@ -133,7 +154,7 @@ impl ExampleApp {
             info!("Texture {} saved successfully", self.def.name);
         }
 
-        if let Err(e) = load_save_undo::write_images(&self.sample_data, &self.output_dir, &self.def.name) {
+        if let Err(e) = load_save_undo::write_images(&self.layers, &self.output_dir, &self.def.name) {
             error!("Failed to write output images for texture {}: {}", self.def.name, e);
         } else {
             info!("Output images for texture {} written successfully", self.def.name);
@@ -199,6 +220,7 @@ impl eframe::App for ExampleApp {
                     let tex = match self.display_settings.mode {
                         DisplayMode::Albedo => &tex.albedo,
                         DisplayMode::Depth => &tex.depth,
+                        DisplayMode::Normal => &tex.normal,
                     };
                     let sz = egui::Vec2::new(display_size, display_size);
                     let rect = egui::Rect::from_center_size(available.center(), sz);
@@ -213,11 +235,19 @@ impl eframe::App for ExampleApp {
                             let y = ((hover_pos.y - rect.min.y) / iscale as f32).floor() as i32;
                             write!(self.tmp_str, "Hovering at ({:.1}, {:.1})", x, y).unwrap();
                             if x >= 0 && x < IMG_SIZE && y >= 0 && y < IMG_SIZE {
-                                let s = self.sample_data[idx(x, y)];
                                 self.tmp_str.clear();
+                                let index = idx(x, y);
                                 write!(self.tmp_str, "Pixel ({}, {})", x, y).unwrap();
-                                write!(self.tmp_str, "\nAlbedo: ({:.3}, {:.3}, {:.3})", s.albedo.x, s.albedo.y, s.albedo.z).unwrap();
-                                write!(self.tmp_str, "\nDepth: {:.3}", s.depth).unwrap();
+
+                                let albedo = self.layers.albedo[index];
+                                write!(self.tmp_str, "\nAlbedo: ({:.3}, {:.3}, {:.3})", albedo.x, albedo.y, albedo.z).unwrap();
+
+                                let depth = self.layers.depth[index];
+                                write!(self.tmp_str, "\nDepth: {:.3}", depth).unwrap();
+
+                                let normal = self.layers.normal[index];
+                                write!(self.tmp_str, "\nNormal: ({:.3}, {:.3}, {:.3})", normal.x, normal.y, normal.z).unwrap();
+
                                 ui.label(&self.tmp_str);
                             } else {
                                 ui.label("Outside");

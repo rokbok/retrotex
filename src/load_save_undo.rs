@@ -98,7 +98,7 @@ impl LoadSaveUndo {
 }
 
 
-pub fn write_images(data: &[definition::GeneratedSample], out_dir: &str, name: &str) -> Result<(), String> {
+pub fn write_images(data: &crate::processing::TextureLayers, out_dir: &str, name: &str) -> Result<(), String> {
     let dir = Path::new(out_dir);
     std::fs::create_dir_all(dir).map_err(|e| format!("Failed to create output directory: {}", e))?;
 
@@ -115,10 +115,10 @@ pub fn write_images(data: &[definition::GeneratedSample], out_dir: &str, name: &
         encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
 
         let mut writer = encoder.write_header().map_err(|e| format!("Failed to write PNG header: {}", e))?;
-        for (i, sample) in data.iter().enumerate() {
-            buf[i * 3 + 0] = Color::linear_channel_to_srgb(sample.albedo.x).saturate().mul_add(255.0, 0.5) as u8;
-            buf[i * 3 + 1] = Color::linear_channel_to_srgb(sample.albedo.y).saturate().mul_add(255.0, 0.5) as u8;
-            buf[i * 3 + 2] = Color::linear_channel_to_srgb(sample.albedo.z).saturate().mul_add(255.0, 0.5) as u8;
+        for (i, sample) in data.albedo.iter().enumerate() {
+            buf[i * 3 + 0] = Color::linear_channel_to_srgb(sample.x).saturate().mul_add(255.0, 0.5) as u8;
+            buf[i * 3 + 1] = Color::linear_channel_to_srgb(sample.y).saturate().mul_add(255.0, 0.5) as u8;
+            buf[i * 3 + 2] = Color::linear_channel_to_srgb(sample.z).saturate().mul_add(255.0, 0.5) as u8;
         }
         writer.write_image_data(&buf[..(3 * IMG_PIXEL_COUNT)]).map_err(|e| format!("Failed to write PNG data: {}", e))?;
         writer.finish().map_err(|e| format!("Failed to finish PNG writing: {}", e))?;
@@ -134,14 +134,29 @@ pub fn write_images(data: &[definition::GeneratedSample], out_dir: &str, name: &
         // encoder.set_source_gamma(ScaledFloat::new(1.0));
 
         let mut writer = encoder.write_header().map_err(|e| format!("Failed to write PNG header: {}", e))?;
-        for (i, sample) in data.iter().enumerate() {
-            let enc = (sample.depth + 64.0).mul_add(512.0, 0.5) as u16;
-            if i == 2000 || i == 0 {
-                info!("Encoding depth value {} to {}", sample.depth, enc);
-            }
+        for (i, sample) in data.depth.iter().enumerate() {
+            let enc = (sample + 64.0).mul_add(512.0, 0.5) as u16;
             buf[(i * 2)..(i * 2 + 2)].copy_from_slice(&enc.to_be_bytes());
         }
         writer.write_image_data(&buf[..(IMG_PIXEL_COUNT * 2)]).map_err(|e| format!("Failed to write PNG data: {}", e))?;
+        writer.finish().map_err(|e| format!("Failed to finish PNG writing: {}", e))?;
+    }
+
+    // Normal
+    {
+        let normal_path = dir.join(format!("{}_normal.png", name));
+        let file = File::create(normal_path).map_err(|e| format!("Failed to create normal image file: {}", e))?;
+        let mut encoder = png::Encoder::new(BufWriter::new(file), crate::IMG_SIZE as u32, crate::IMG_SIZE as u32);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+
+        let mut writer = encoder.write_header().map_err(|e| format!("Failed to write PNG header: {}", e))?;
+        for (i, sample) in data.normal.iter().enumerate() {
+            buf[i * 3 + 0] = sample.x.mul_add(0.5, 0.5).saturate().mul_add(255.0, 0.5) as u8;
+            buf[i * 3 + 1] = sample.y.mul_add(0.5, 0.5).saturate().mul_add(255.0, 0.5) as u8;
+            buf[i * 3 + 2] = sample.z.mul_add(0.5, 0.5).saturate().mul_add(255.0, 0.5) as u8;
+        }
+        writer.write_image_data(&buf[..(3 * IMG_PIXEL_COUNT)]).map_err(|e| format!("Failed to write PNG data: {}", e))?;
         writer.finish().map_err(|e| format!("Failed to finish PNG writing: {}", e))?;
     }
 
