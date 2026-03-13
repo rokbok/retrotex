@@ -1,5 +1,5 @@
 
-use std::{fmt::Write as _, time::{Duration, Instant}};
+use std::{fmt::Write as _, hash::Hash, time::{Duration, Instant}};
 
 use clap::Parser as _;
 use eframe::egui;
@@ -7,7 +7,7 @@ use egui::{Color32, ColorImage, TextureHandle};
 use glam::FloatExt as _;
 use strum_macros::{AsRefStr, EnumString, VariantNames};
 
-use crate::{load_save_undo::LoadSaveUndo, processing::TextureLayers, util::{add_enum_dropdown, quick_hash}};
+use crate::{load_save_undo::LoadSaveUndo, processing::TextureLayers, util::{add_enum_dropdown, single_hash}};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
@@ -35,12 +35,19 @@ pub fn idx(x: i32, y: i32) -> usize {
     (y * IMG_SIZE + x) as usize
 }
 
+pub fn idx_safe(x: i32, y: i32) -> usize {
+    let x = x.clamp(0, IMG_SIZE - 1);
+    let y = y.clamp(0, IMG_SIZE - 1);
+    idx(x, y)
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Default, AsRefStr, EnumString, VariantNames)]
 enum DisplayMode { 
     #[default]
     Albedo,
     Depth,
     Normal,
+    AmbientOcclusion,
 }
 
 #[derive(Debug, Default)]
@@ -53,6 +60,7 @@ struct TextureHandleSet {
     albedo: TextureHandle,
     depth: TextureHandle,
     normal: TextureHandle,
+    ao: TextureHandle,
 }
 
 struct ExampleApp {
@@ -98,6 +106,7 @@ impl ExampleApp {
         let mut albedo_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
         let mut depth_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
         let mut normal_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
+        let mut ao_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
 
         for y in 0..IMG_SIZE {
             for x in 0..IMG_SIZE {
@@ -113,12 +122,15 @@ impl ExampleApp {
             }
         }
 
-        self.layers.recalculate();
+        self.layers.recalculate(&self.def.ao_settings);
 
         for y in 0..IMG_SIZE {
             for x in 0..IMG_SIZE {
                 let n = self.layers.normal[idx(x, y)];
                 normal_img.pixels[idx(x, y)] = egui::Rgba::from_rgba_unmultiplied(n.x.mul_add(0.5, 0.5).saturate(), n.y.mul_add(0.5, 0.5).saturate(), n.z.saturate(), 1.0).into();
+
+                let ao = self.layers.ao[idx(x, y)];
+                ao_img.pixels[idx(x, y)] = egui::Rgba::from_srgba_unmultiplied((ao * 255.0) as u8, (ao * 255.0) as u8, (ao * 255.0) as u8, 255).into();
             }
         }
 
@@ -132,6 +144,7 @@ impl ExampleApp {
             tex.albedo.set(albedo_img, PREVIEW_TEX_OPTIONS);
             tex.depth.set(depth_img, PREVIEW_TEX_OPTIONS);
             tex.normal.set(normal_img, PREVIEW_TEX_OPTIONS);
+            tex.ao.set(ao_img, PREVIEW_TEX_OPTIONS);
 
             // Data already was written into the correct place
         } else if let Some(ctx) = ctx {
@@ -139,6 +152,7 @@ impl ExampleApp {
                 albedo: ctx.load_texture("preview_albedo", albedo_img, PREVIEW_TEX_OPTIONS),
                 depth: ctx.load_texture("preview_depth", depth_img, PREVIEW_TEX_OPTIONS),
                 normal: ctx.load_texture("preview_normal", normal_img, PREVIEW_TEX_OPTIONS),
+                ao: ctx.load_texture("preview_ao", ao_img, PREVIEW_TEX_OPTIONS),
             });
         }
     }
@@ -165,6 +179,7 @@ impl ExampleApp {
 impl eframe::App for ExampleApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut regen_needed = self.textures.is_none();
+        let old_hash = single_hash(&self.def);
         let closing = ctx.input(|i| {
             if i.key_pressed(egui::Key::F10) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -190,16 +205,15 @@ impl eframe::App for ExampleApp {
         egui::SidePanel::right("right_panel")
             .default_width(400.0)
             .show(ctx, |ui| {
-                let old_hash = quick_hash(&self.def);
                 definition_ui::definition_ui(&mut self.def, &mut self.tmp_str, ui, &mut self.clipboard);
-                let new_hash = quick_hash(&self.def);
-                let changed = old_hash != new_hash;
-                if changed {
-                    self.auto_save_at = Some(Instant::now() + Duration::from_millis(AUTO_SAVE_DELAY_MILLIS));
-                }
 
-                regen_needed |= changed;
             });
+        
+        let new_hash = single_hash(&self.def);
+        if old_hash != new_hash {
+            self.auto_save_at = Some(Instant::now() + Duration::from_millis(AUTO_SAVE_DELAY_MILLIS));
+            regen_needed = true;
+        }
 
         if regen_needed {
             self.regenerate(Some(ctx));
@@ -221,6 +235,7 @@ impl eframe::App for ExampleApp {
                         DisplayMode::Albedo => &tex.albedo,
                         DisplayMode::Depth => &tex.depth,
                         DisplayMode::Normal => &tex.normal,
+                        DisplayMode::AmbientOcclusion => &tex.ao,
                     };
                     let sz = egui::Vec2::new(display_size, display_size);
                     let rect = egui::Rect::from_center_size(available.center(), sz);

@@ -3,7 +3,7 @@ use std::{hash::{DefaultHasher, Hash, Hasher}, str::FromStr};
 use glam::{Vec2, Vec4};
 use strum::VariantNames;
 
-pub fn quick_hash<T: Hash>(t: &T) -> u64 {
+pub fn single_hash<T: Hash>(t: &T) -> u64 {
     let mut hasher = DefaultHasher::new();
     t.hash(&mut hasher);
     hasher.finish()

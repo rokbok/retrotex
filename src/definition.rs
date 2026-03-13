@@ -7,6 +7,7 @@ use strum_macros::{AsRefStr, EnumString, VariantNames};
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
 
+use crate::processing::AOSettings;
 use crate::{IMG_SIZE, noise, util};
 use crate::color::Color;
 
@@ -174,11 +175,11 @@ impl TexturePass {
 
         if self.bevel_size != 0 && self.bevel_steepness != 0 {
             let bdepth = if self.bevel_steepness > 0 {
-                (self.bevel_size * self.bevel_steepness) as f32
+                (-self.bevel_size * self.bevel_steepness) as f32
             } else {
-                self.bevel_size as f32 / (-self.bevel_steepness as f32)
+                -self.bevel_size as f32 / (-self.bevel_steepness as f32)
             };
-            let bt = ((bevel_dist + 0.5) / self.bevel_size as f32).abs().saturate();
+            let bt = ((bevel_dist + 0.5) / self.bevel_size.abs() as f32).saturate();
             *dest_d += bt * bdepth;
         }
 
@@ -229,6 +230,7 @@ pub struct TextureDefinition {
     #[serde(skip)] // This will be the filename
     pub name: String,
     pub background: Color,
+    pub ao_settings: AOSettings,
     pub passes: Vec<TexturePass>,
 }
 
@@ -237,6 +239,7 @@ impl TextureDefinition {
         Self {
             name: name.to_string(),
             background: Color::new(0.0, 0.0, 0.0, 1.0),
+            ao_settings: AOSettings::default(),
             passes: vec![TexturePass::new()],
         }
     }
@@ -261,6 +264,7 @@ impl Default for TextureDefinition {
         Self {
             name: DEFAULT_NAME.to_string(),
             background: Color::new(0.0, 0.0, 0.0, 1.0),
+            ao_settings: AOSettings::default(),
             passes: vec![],
         }
     }

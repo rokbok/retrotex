@@ -127,6 +127,7 @@ pub fn write_images(data: &crate::processing::TextureLayers, out_dir: &str, name
     // Depth
     {
         let depth_path = dir.join(format!("{}_depth.png", name));
+        info!("Writing depth image to {}", depth_path.display());
         let file = File::create(depth_path).map_err(|e| format!("Failed to create depth image file: {}", e))?;
         let mut encoder = png::Encoder::new(BufWriter::new(file), crate::IMG_SIZE as u32, crate::IMG_SIZE as u32);
         encoder.set_color(png::ColorType::Grayscale);
@@ -145,6 +146,7 @@ pub fn write_images(data: &crate::processing::TextureLayers, out_dir: &str, name
     // Normal
     {
         let normal_path = dir.join(format!("{}_normal.png", name));
+        info!("Writing normal image to {}", normal_path.display());
         let file = File::create(normal_path).map_err(|e| format!("Failed to create normal image file: {}", e))?;
         let mut encoder = png::Encoder::new(BufWriter::new(file), crate::IMG_SIZE as u32, crate::IMG_SIZE as u32);
         encoder.set_color(png::ColorType::Rgb);
@@ -157,6 +159,23 @@ pub fn write_images(data: &crate::processing::TextureLayers, out_dir: &str, name
             buf[i * 3 + 2] = sample.z.mul_add(0.5, 0.5).saturate().mul_add(255.0, 0.5) as u8;
         }
         writer.write_image_data(&buf[..(3 * IMG_PIXEL_COUNT)]).map_err(|e| format!("Failed to write PNG data: {}", e))?;
+        writer.finish().map_err(|e| format!("Failed to finish PNG writing: {}", e))?;
+    }
+
+    // AO
+    {
+        let ao_path = dir.join(format!("{}_ao.png", name));
+        info!("Writing AO image to {}", ao_path.display());
+        let file = File::create(ao_path).map_err(|e| format!("Failed to create AO image file: {}", e))?;
+        let mut encoder = png::Encoder::new(BufWriter::new(file), crate::IMG_SIZE as u32, crate::IMG_SIZE as u32);
+        encoder.set_color(png::ColorType::Grayscale);
+        encoder.set_depth(png::BitDepth::Eight);
+
+        let mut writer = encoder.write_header().map_err(|e| format!("Failed to write PNG header: {}", e))?;
+        for (i, sample) in data.ao.iter().enumerate() {
+            buf[i] = sample.mul_add(255.0, 0.5) as u8;
+        }
+        writer.write_image_data(&buf[..IMG_PIXEL_COUNT]).map_err(|e| format!("Failed to write PNG data: {}", e))?;
         writer.finish().map_err(|e| format!("Failed to finish PNG writing: {}", e))?;
     }
 

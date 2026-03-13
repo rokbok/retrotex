@@ -16,6 +16,12 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
         ui.label("Background:");
         ui.color_edit_button_rgba_unmultiplied(&mut def.background.v);
     });
+    ui.horizontal( | ui | {
+        ui.label("AO:");
+        ui.add(egui::DragValue::new(&mut def.ao_settings.strength).range(0..=100));
+        ui.label("Radius:");
+        ui.add(egui::DragValue::new(&mut def.ao_settings.radius).range(1..=(IMG_SIZE - 1)));
+    });
 
     let mut pass_op = Option::<PassOperation>::None;
     for (pass_idx, pass) in def.passes.iter_mut().enumerate() {
