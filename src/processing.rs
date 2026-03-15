@@ -1,27 +1,12 @@
 use std::iter::zip;
 
 use glam::{FloatExt, IVec2, Vec2, Vec3};
-use serde::{Deserialize, Serialize};
 
-use crate::{IMG_PIXEL_COUNT, IMG_SIZE, idx, idx_safe};
+use crate::{IMG_PIXEL_COUNT, IMG_SIZE, definition::AOSettings, idx, idx_safe};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
-pub struct AOSettings {
-    pub radius: i32,
-    pub strength: i32,
-}
-
-impl Default for AOSettings {
-    fn default() -> Self {
-        Self {
-            radius: 4,
-            strength: 25,
-        }
-    }
-}
 
 fn calculate_normals(depth: &[f32; IMG_PIXEL_COUNT], normals: &mut Box<[Vec3; IMG_PIXEL_COUNT]>) {
     // Y points up, Unity-style

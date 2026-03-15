@@ -116,9 +116,8 @@ pub fn write_images(data: &crate::processing::TextureLayers, out_dir: &str, name
 
         let mut writer = encoder.write_header().map_err(|e| format!("Failed to write PNG header: {}", e))?;
         for (i, sample) in data.albedo.iter().enumerate() {
-            buf[i * 3 + 0] = Color::linear_channel_to_srgb(sample.x).saturate().mul_add(255.0, 0.5) as u8;
-            buf[i * 3 + 1] = Color::linear_channel_to_srgb(sample.y).saturate().mul_add(255.0, 0.5) as u8;
-            buf[i * 3 + 2] = Color::linear_channel_to_srgb(sample.z).saturate().mul_add(255.0, 0.5) as u8;
+            let c = Color::from_linear(sample.extend(1.0));
+            buf[i * 3..i *  3 + 3].copy_from_slice(c.rgba[..3].as_ref());
         }
         writer.write_image_data(&buf[..(3 * IMG_PIXEL_COUNT)]).map_err(|e| format!("Failed to write PNG data: {}", e))?;
         writer.finish().map_err(|e| format!("Failed to finish PNG writing: {}", e))?;

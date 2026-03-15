@@ -1,7 +1,9 @@
+// TODO:
+// - Transition serialized Colors in u8
 
 use std::{fmt::Write as _, hash::Hash, time::{Duration, Instant}};
 
-use clap::Parser as _;
+use clap::{Parser as _};
 use eframe::egui;
 use egui::{Color32, ColorImage, TextureHandle};
 use glam::FloatExt as _;
@@ -111,8 +113,7 @@ impl ExampleApp {
         for y in 0..IMG_SIZE {
             for x in 0..IMG_SIZE {
                 let s = self.def.generate_pixel(x, y);
-
-                albedo_img.pixels[idx(x, y)] = egui::Rgba::from_rgba_unmultiplied(s.albedo.x.clamp(0.0, 1.0), s.albedo.y.clamp(0.0, 1.0), s.albedo.z.clamp(0.0, 1.0), 1.0).into();
+                albedo_img.pixels[idx(x, y)] = color::Color::from_linear(s.albedo.extend(1.0)).into();
 
                 let d = (s.depth + 128.0).round().clamp(0.0, 255.0) as u8;
                 depth_img.pixels[idx(x, y)] = egui::Rgba::from_srgba_unmultiplied(d, d, d, 255).into();
@@ -206,7 +207,6 @@ impl eframe::App for ExampleApp {
             .default_width(400.0)
             .show(ctx, |ui| {
                 definition_ui::definition_ui(&mut self.def, &mut self.tmp_str, ui, &mut self.clipboard);
-
             });
         
         let new_hash = single_hash(&self.def);

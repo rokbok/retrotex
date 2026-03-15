@@ -7,12 +7,12 @@ use strum_macros::{AsRefStr, EnumString, VariantNames};
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
 
-use crate::processing::AOSettings;
 use crate::{IMG_SIZE, noise, util};
 use crate::color::Color;
 
 pub const DEFAULT_NAME: &str = "unnamed";
 
+#[allow(dead_code)]
 const SQRT2HALF: f32 = 0.70710678118654752440084436210485;
 fn light_dir() -> Vec3 {
     Vec3::new(1.0, 2.0, 3.0).normalize()
@@ -45,6 +45,27 @@ impl Display for BlendMode {
             BlendMode::Alpha => write!(f, "Normal"),
             BlendMode::Additive => write!(f, "Additive"),
             BlendMode::Multiply => write!(f, "Multiply"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+pub struct LightingSettings {
+    pub light_dir: [i32; 3],
+    pub ambient: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+pub struct AOSettings {
+    pub radius: i32,
+    pub strength: i32,
+}
+
+impl Default for AOSettings {
+    fn default() -> Self {
+        Self {
+            radius: 4,
+            strength: 25,
         }
     }
 }
@@ -97,14 +118,15 @@ pub struct TexturePass {
 impl TexturePass {
     pub fn new() -> Self {
         Self {
-            color: Color::random().with_alpha(0.5),
+            color: Color::random(),
             perlin_seed: rand::random(),
             white_noise_seed: rand::random(),
+            rect: Rect { x: IMG_SIZE as i32 / 4, y: IMG_SIZE as i32 / 4, w: IMG_SIZE as i32 / 2, h: IMG_SIZE as i32 / 2 },
             ..Default::default()
         }
     }
     
-    fn apply(&self, dest: &mut Vec3, dest_d: &mut f32, x: i32, y: i32, light_dir: Vec3) {
+    fn apply(&self, dest: &mut Vec3, dest_d: &mut f32, x: i32, y: i32, _light_dir: Vec3) {
         if !self.rect.contains(x, y) {
             return;
         }
@@ -112,7 +134,7 @@ impl TexturePass {
         let gen_x = x - self.rect.x;
         let gen_y = y - self.rect.y;
 
-        let mut src: Vec4 = self.color.into();
+        let mut src: Vec4 = self.color.to_linear();
 
         if self.perlin {
             let noise_scale = 0.002 * self.perlin_scale as f32;
@@ -132,13 +154,13 @@ impl TexturePass {
             src.w *= noise.saturate();
         }
 
-        let (mut bevel_dir, mut bevel_dist) = if self.bevel_size != 0 {
+        let mut bevel_dist = if self.bevel_size != 0 {
             let from_boundary = Vec4::new(gen_x as f32 + 0.5, gen_y as f32 + 0.5, (self.rect.w - gen_x) as f32 - 0.5, (self.rect.h - gen_y) as f32 - 0.5);
             let smallest = util::retain_min_abs(from_boundary);
             let ret = smallest.xy() - smallest.zw();
-            (ret.normalize_or_zero(), ret.abs().max_element())
+            ret.abs().max_element()
         } else {
-            (Vec2::ZERO, 0.0)
+            0.0
         };
 
         if self.round_rect {
@@ -156,21 +178,9 @@ impl TexturePass {
             if self.bevel_size != 0 {
                 let from_corner = rel.abs() - (half_size - Vec2::splat(rad));
                 if from_corner.cmpgt(Vec2::ZERO).all() {
-                    bevel_dir = from_corner.normalize_or_zero() * -rel.signum();
                     bevel_dist = rad - from_corner.length();
                 }
             }
-        }
-
-        if self.bevel_size != 0 && bevel_dist < self.bevel_size.abs() as f32 && bevel_dir.abs().cmpge(Vec2::splat(0.0001)).any() {
-            let normal = SQRT2HALF * Vec3::new(
-                -bevel_dir.x * self.bevel_size.signum() as f32,
-                -bevel_dir.y * self.bevel_size.signum() as f32,
-                1.0,
-            );
-            let light = normal.dot(light_dir).max(0.0);
-            let fact = light.remap(0.0, light_dir.z, 0.0, 1.0);
-            src *= Vec4::new(fact, fact, fact, 1.0);
         }
 
         if self.bevel_size != 0 && self.bevel_steepness != 0 {
@@ -238,7 +248,7 @@ impl TextureDefinition {
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
-            background: Color::new(0.0, 0.0, 0.0, 1.0),
+            background: Color::new(0, 0, 0, 255),
             ao_settings: AOSettings::default(),
             passes: vec![TexturePass::new()],
         }
@@ -246,7 +256,7 @@ impl TextureDefinition {
 
     pub fn generate_pixel(&self, x: i32, y: i32) -> GeneratedSample {
         let mut ret = GeneratedSample {
-            albedo: Vec3::new(self.background.v[0], self.background.v[1], self.background.v[2]),
+            albedo: self.background.to_linear().truncate(),
             depth: 0.0,
         };
         let light_dir = light_dir();
@@ -263,7 +273,7 @@ impl Default for TextureDefinition {
     fn default() -> Self {
         Self {
             name: DEFAULT_NAME.to_string(),
-            background: Color::new(0.0, 0.0, 0.0, 1.0),
+            background: Color::new(0, 0, 0, 255),
             ao_settings: AOSettings::default(),
             passes: vec![],
         }
