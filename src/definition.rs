@@ -1,6 +1,6 @@
 use std::{fmt::Display, hash::Hash};
 
-use glam::{FloatExt, Vec2, Vec3, Vec4, Vec4Swizzles as _};
+use glam::{FloatExt, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr, EnumString, VariantNames};
 
@@ -14,9 +14,6 @@ pub const DEFAULT_NAME: &str = "unnamed";
 
 #[allow(dead_code)]
 const SQRT2HALF: f32 = 0.70710678118654752440084436210485;
-fn light_dir() -> Vec3 {
-    Vec3::new(1.0, 2.0, 3.0).normalize()
-}
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize, AsRefStr, EnumString, VariantNames)]
 pub enum BlendMode {
@@ -53,6 +50,15 @@ impl Display for BlendMode {
 pub struct LightingSettings {
     pub light_dir: [i32; 3],
     pub ambient: i32,
+}
+
+impl Default for LightingSettings {
+    fn default() -> Self {
+        Self {
+            light_dir: [10, -50, 20],
+            ambient: 50,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
@@ -117,16 +123,20 @@ pub struct TexturePass {
 
 impl TexturePass {
     pub fn new() -> Self {
+        let l = rand::random_range(0..=IMG_SIZE - 40);
+        let r = rand::random_range(l + 20..=IMG_SIZE);
+        let t = rand::random_range(0..=IMG_SIZE - 40);
+        let b = rand::random_range(t + 20..=IMG_SIZE);
         Self {
             color: Color::random(),
             perlin_seed: rand::random(),
             white_noise_seed: rand::random(),
-            rect: Rect { x: IMG_SIZE as i32 / 4, y: IMG_SIZE as i32 / 4, w: IMG_SIZE as i32 / 2, h: IMG_SIZE as i32 / 2 },
+            rect: Rect { x: l, y: t, w: r - l, h: b - t },
             ..Default::default()
         }
     }
     
-    fn apply(&self, dest: &mut Vec3, dest_d: &mut f32, x: i32, y: i32, _light_dir: Vec3) {
+    fn apply(&self, dest: &mut Vec3, dest_d: &mut f32, x: i32, y: i32) {
         if !self.rect.contains(x, y) {
             return;
         }
@@ -156,9 +166,7 @@ impl TexturePass {
 
         let mut bevel_dist = if self.bevel_size != 0 {
             let from_boundary = Vec4::new(gen_x as f32 + 0.5, gen_y as f32 + 0.5, (self.rect.w - gen_x) as f32 - 0.5, (self.rect.h - gen_y) as f32 - 0.5);
-            let smallest = util::retain_min_abs(from_boundary);
-            let ret = smallest.xy() - smallest.zw();
-            ret.abs().max_element()
+            from_boundary.min_element()
         } else {
             0.0
         };
@@ -189,7 +197,19 @@ impl TexturePass {
             } else {
                 -self.bevel_size as f32 / (-self.bevel_steepness as f32)
             };
-            let bt = ((bevel_dist + 0.5) / self.bevel_size.abs() as f32).saturate();
+            let bt_lin = ((bevel_dist + 0.5) / self.bevel_size.abs() as f32).saturate();
+            let bt = match (self.bevel_ease_in, self.bevel_ease_out) {
+                (true, true) => {
+                    if bt_lin < 0.5 {
+                        0.5 * (bt_lin * 2.0).powi(2)
+                    } else {
+                        1.0 - 0.5 * ((1.0 - bt_lin) * 2.0).powi(2)
+                    }
+                },
+                (true, false) => bt_lin.powi(2),
+                (false, true) => 1.0 - (1.0 - bt_lin).powi(2),
+                (false, false) => bt_lin,
+            };
             *dest_d += bt * bdepth;
         }
 
@@ -241,6 +261,7 @@ pub struct TextureDefinition {
     pub name: String,
     pub background: Color,
     pub ao_settings: AOSettings,
+    pub lighting_settings: LightingSettings,
     pub passes: Vec<TexturePass>,
 }
 
@@ -250,6 +271,7 @@ impl TextureDefinition {
             name: name.to_string(),
             background: Color::new(0, 0, 0, 255),
             ao_settings: AOSettings::default(),
+            lighting_settings: LightingSettings::default(),
             passes: vec![TexturePass::new()],
         }
     }
@@ -259,10 +281,9 @@ impl TextureDefinition {
             albedo: self.background.to_linear().truncate(),
             depth: 0.0,
         };
-        let light_dir = light_dir();
         for pass in &self.passes{
             if pass.enabled {
-                pass.apply(&mut ret.albedo, &mut ret.depth, x, y, light_dir);
+                pass.apply(&mut ret.albedo, &mut ret.depth, x, y);
             }
         }
         ret
@@ -275,6 +296,7 @@ impl Default for TextureDefinition {
             name: DEFAULT_NAME.to_string(),
             background: Color::new(0, 0, 0, 255),
             ao_settings: AOSettings::default(),
+            lighting_settings: LightingSettings::default(),
             passes: vec![],
         }
     }

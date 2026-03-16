@@ -46,6 +46,7 @@ pub fn idx_safe(x: i32, y: i32) -> usize {
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Default, AsRefStr, EnumString, VariantNames)]
 enum DisplayMode { 
     #[default]
+    Lit,
     Albedo,
     Depth,
     Normal,
@@ -63,6 +64,7 @@ struct TextureHandleSet {
     depth: TextureHandle,
     normal: TextureHandle,
     ao: TextureHandle,
+    lit: TextureHandle,
 }
 
 struct ExampleApp {
@@ -109,6 +111,7 @@ impl ExampleApp {
         let mut depth_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
         let mut normal_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
         let mut ao_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
+        let mut lit_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
 
         for y in 0..IMG_SIZE {
             for x in 0..IMG_SIZE {
@@ -123,15 +126,19 @@ impl ExampleApp {
             }
         }
 
-        self.layers.recalculate(&self.def.ao_settings);
+        self.layers.recalculate(&self.def.ao_settings, & self.def.lighting_settings);
 
         for y in 0..IMG_SIZE {
             for x in 0..IMG_SIZE {
-                let n = self.layers.normal[idx(x, y)];
-                normal_img.pixels[idx(x, y)] = egui::Rgba::from_rgba_unmultiplied(n.x.mul_add(0.5, 0.5).saturate(), n.y.mul_add(0.5, 0.5).saturate(), n.z.saturate(), 1.0).into();
+                let index = idx(x, y);
+                let n = self.layers.normal[index];
+                normal_img.pixels[index] = egui::Rgba::from_rgba_unmultiplied(n.x.mul_add(0.5, 0.5).saturate(), n.y.mul_add(0.5, 0.5).saturate(), n.z.saturate(), 1.0).into();
 
-                let ao = self.layers.ao[idx(x, y)];
-                ao_img.pixels[idx(x, y)] = egui::Rgba::from_srgba_unmultiplied((ao * 255.0) as u8, (ao * 255.0) as u8, (ao * 255.0) as u8, 255).into();
+                let ao = self.layers.ao[index];
+                ao_img.pixels[index] = egui::Rgba::from_srgba_unmultiplied((ao * 255.0) as u8, (ao * 255.0) as u8, (ao * 255.0) as u8, 255).into();
+
+                let lit = self.layers.lit[index];
+                lit_img.pixels[index] = color::Color::from_linear(lit.extend(1.0)).into();
             }
         }
 
@@ -146,6 +153,7 @@ impl ExampleApp {
             tex.depth.set(depth_img, PREVIEW_TEX_OPTIONS);
             tex.normal.set(normal_img, PREVIEW_TEX_OPTIONS);
             tex.ao.set(ao_img, PREVIEW_TEX_OPTIONS);
+            tex.lit.set(lit_img, PREVIEW_TEX_OPTIONS);
 
             // Data already was written into the correct place
         } else if let Some(ctx) = ctx {
@@ -154,6 +162,7 @@ impl ExampleApp {
                 depth: ctx.load_texture("preview_depth", depth_img, PREVIEW_TEX_OPTIONS),
                 normal: ctx.load_texture("preview_normal", normal_img, PREVIEW_TEX_OPTIONS),
                 ao: ctx.load_texture("preview_ao", ao_img, PREVIEW_TEX_OPTIONS),
+                lit: ctx.load_texture("preview_lit", lit_img, PREVIEW_TEX_OPTIONS),
             });
         }
     }
@@ -232,6 +241,7 @@ impl eframe::App for ExampleApp {
                     let iscale = (mnsz / (IMG_SIZE as f32)).floor().max(1.0) as i32;
                     let display_size = IMG_SIZE as f32 * iscale as f32;
                     let tex = match self.display_settings.mode {
+                        DisplayMode::Lit => &tex.lit,
                         DisplayMode::Albedo => &tex.albedo,
                         DisplayMode::Depth => &tex.depth,
                         DisplayMode::Normal => &tex.normal,

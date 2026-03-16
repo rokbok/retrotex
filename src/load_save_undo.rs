@@ -178,5 +178,24 @@ pub fn write_images(data: &crate::processing::TextureLayers, out_dir: &str, name
         writer.finish().map_err(|e| format!("Failed to finish PNG writing: {}", e))?;
     }
 
+    // Lit
+    {
+        let lit_path = dir.join(format!("{}.png", name));
+        info!("Writing lit image to {}", lit_path.display());
+        let file = File::create(lit_path).map_err(|e| format!("Failed to create lit image file: {}", e))?;
+        let mut encoder = png::Encoder::new(BufWriter::new(file), crate::IMG_SIZE as u32, crate::IMG_SIZE as u32);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
+
+        let mut writer = encoder.write_header().map_err(|e| format!("Failed to write PNG header: {}", e))?;
+        for (i, sample) in data.lit.iter().enumerate() {
+            let c = Color::from_linear(sample.extend(1.0));
+            buf[i * 3..i *  3 + 3].copy_from_slice(c.rgba[..3].as_ref());
+        }
+        writer.write_image_data(&buf[..(3 * IMG_PIXEL_COUNT)]).map_err(|e| format!("Failed to write PNG data: {}", e))?;
+        writer.finish().map_err(|e| format!("Failed to finish PNG writing: {}", e))?;
+    }
+
     Ok(())
 }

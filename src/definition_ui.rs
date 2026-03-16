@@ -10,11 +10,36 @@ fn add_full_width<T: egui::Widget>(ui: &mut egui::Ui, widget: T) -> egui::Respon
     ui.add_sized([available_width, 0.0], widget)
 }
 
+pub fn color_with_copy_paste(ui: &mut egui::Ui, color: &mut Color, clipboard: &mut arboard::Clipboard, tmp_str: &mut String) {
+    ui.color_edit_button_srgba_unmultiplied(&mut color.rgba);
+    tmp_str.clear();
+    color.write_hex(tmp_str).expect("Color string conversion failed");
+    ui.label(&*tmp_str);
+    if ui.button("Copy").clicked() {
+        ui.ctx().copy_text(tmp_str.clone());
+    }
+    if ui.button("Paste").clicked() {
+        if let Ok(clipboard_str) = clipboard.get_text() {
+            if let Ok(new_color) = Color::from_hex(&clipboard_str) {
+                *color = new_color;
+            }
+        }
+    }
+}
+
 pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut egui::Ui, clipboard: &mut arboard::Clipboard) {
     ui.heading(&def.name);
     ui.horizontal(| ui | {
         ui.label("Background:");
-        ui.color_edit_button_srgba_unmultiplied(&mut def.background.rgba);
+        color_with_copy_paste(ui, &mut def.background, clipboard, tmp_str);
+    });
+    ui.horizontal(| ui | {
+        ui.label("Light:");
+        ui.add(egui::DragValue::new(&mut def.lighting_settings.light_dir[0]).range(-100..=100));
+        ui.add(egui::DragValue::new(&mut def.lighting_settings.light_dir[1]).range(-100..=100));
+        ui.add(egui::DragValue::new(&mut def.lighting_settings.light_dir[2]).range(1..=100));
+        ui.label("Ambient:");
+        ui.add(egui::DragValue::new(&mut def.lighting_settings.ambient).range(0..=100));
     });
     ui.horizontal( | ui | {
         ui.label("AO:");
@@ -54,20 +79,7 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                 ui.checkbox(&mut pass.enabled, "Enabled");
 
                 ui.horizontal_wrapped(| ui | {
-                    ui.color_edit_button_srgba_unmultiplied(&mut pass.color.rgba);
-                    tmp_str.clear();
-                    pass.color.write_hex(tmp_str).expect("Color string conversion failed");
-                    ui.label(&*tmp_str);
-                    if ui.button("Copy").clicked() {
-                        ui.ctx().copy_text(tmp_str.clone());
-                    }
-                    if ui.button("Paste").clicked() {
-                        if let Ok(clipboard_str) = clipboard.get_text() {
-                            if let Ok(color) = Color::from_hex(&clipboard_str) {
-                                pass.color = color;
-                            }
-                        }
-                    }
+                    color_with_copy_paste(ui, &mut pass.color, clipboard, tmp_str);
                 });
 
                 ui.horizontal( | ui | {

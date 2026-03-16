@@ -1,8 +1,8 @@
 use std::iter::zip;
 
-use glam::{FloatExt, IVec2, Vec2, Vec3};
+use glam::{FloatExt, IVec2, IVec3, Vec2, Vec3};
 
-use crate::{IMG_PIXEL_COUNT, IMG_SIZE, definition::AOSettings, idx, idx_safe};
+use crate::{IMG_PIXEL_COUNT, IMG_SIZE, definition::{AOSettings, LightingSettings}, idx, idx_safe};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
@@ -43,7 +43,7 @@ fn calculate_ao(depth: &[f32; IMG_PIXEL_COUNT], ao: &mut Box<[f32; IMG_PIXEL_COU
     ];
     let lengths = dirs.map(| d | d.as_vec2().length() );
 
-    let strength = 0.01 * settings.strength as f32;
+    let strength = settings.strength as f32 / 100.0;
     for y in 0..IMG_SIZE {
         for x in 0..IMG_SIZE {
             let l = depth[idx_safe(x - 1, y)];
@@ -72,11 +72,36 @@ fn calculate_ao(depth: &[f32; IMG_PIXEL_COUNT], ao: &mut Box<[f32; IMG_PIXEL_COU
     }
 }
 
+fn calculate_light(
+    albedo: &[Vec3; IMG_PIXEL_COUNT],
+    normal: &[Vec3; IMG_PIXEL_COUNT],
+    ao: &[f32; IMG_PIXEL_COUNT],
+    lit: &mut Box<[Vec3; IMG_PIXEL_COUNT]>,
+    light: &LightingSettings,
+) {
+    let mut light_dir: Vec3 = IVec3::from_array(light.light_dir).as_vec3().normalize_or_zero();
+    if light_dir.length_squared() < 0.001 {
+        light_dir = Vec3::new(1.0, 3.0, 2.0).normalize();
+    }
+
+    let lfact = 1.0 / light_dir.z.abs().max(0.1); // Make sure flat surface has the assigned color exactly -- within reason
+
+    for i in 0..IMG_PIXEL_COUNT {
+        let col = albedo[i];
+        let normal = normal[i];
+        let l = light_dir.dot(normal).max(0.0) * lfact;
+        let amb = ao[i];
+        let f = l.lerp(1.0, (light.ambient as f32 / 100.0).saturate()) * amb;
+        lit[i] = col * f;
+    }
+}
+
 pub struct TextureLayers {
     pub albedo: Box<[Vec3; IMG_PIXEL_COUNT]>,
     pub depth: Box<[f32; IMG_PIXEL_COUNT]>,
     pub normal: Box<[Vec3; IMG_PIXEL_COUNT]>,
     pub ao: Box<[f32; IMG_PIXEL_COUNT]>,
+    pub lit: Box<[Vec3; IMG_PIXEL_COUNT]>,
 }
 
 impl Default for TextureLayers {
@@ -86,13 +111,15 @@ impl Default for TextureLayers {
             depth: Box::new([0.0; IMG_PIXEL_COUNT]),
             normal: Box::new([Vec3::new(0.0, 0.0, 1.0); IMG_PIXEL_COUNT]),
             ao: Box::new([0.0; IMG_PIXEL_COUNT]),
+            lit: Box::new([Vec3::ZERO; IMG_PIXEL_COUNT]),
         }
     }
 }
 
 impl TextureLayers {
-    pub fn recalculate(&mut self, ao_settings: &AOSettings) {
+    pub fn recalculate(&mut self, ao_settings: &AOSettings, light: &LightingSettings) {
         calculate_normals(&self.depth, &mut self.normal);
         calculate_ao(&self.depth, &mut self.ao, ao_settings);
+        calculate_light(&self.albedo, &self.normal, &self.ao, &mut self.lit, light);
     }
 }

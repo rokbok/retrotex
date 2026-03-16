@@ -14,13 +14,6 @@ pub fn box_sdf(p: Vec2, b: Vec2) -> f32 {
     d.max(Vec2::ZERO).length() + d.x.max(d.y).min(0.0)
 }
 
-#[inline]
-pub fn retain_min_abs(v: Vec4) -> Vec4 {
-    let vabs = v.abs();
-    let mnel = vabs.min_element();
-    Vec4::select(vabs.cmpeq(Vec4::splat(mnel)), v, Vec4::ZERO)
-}
-
 pub fn add_enum_dropdown<T: AsRef<str> + FromStr + VariantNames>(ui: &mut egui::Ui, value: &mut T, hash_str: &str, hash_idx: usize, full_width: bool)
 where <T as FromStr>::Err: std::fmt::Debug
 {
