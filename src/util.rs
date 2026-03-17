@@ -1,6 +1,6 @@
 use std::{hash::{DefaultHasher, Hash, Hasher}, str::FromStr};
 
-use glam::{Vec2, Vec4};
+use glam::Vec2;
 use strum::VariantNames;
 
 pub fn single_hash<T: Hash>(t: &T) -> u64 {
