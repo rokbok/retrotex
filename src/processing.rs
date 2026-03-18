@@ -24,7 +24,11 @@ fn calculate_normals(depth: &[f32; IMG_PIXEL_COUNT], normals: &mut Box<[Vec3; IM
     }
 }
 
-fn calculate_ao(depth: &[f32; IMG_PIXEL_COUNT], ao: &mut Box<[f32; IMG_PIXEL_COUNT]>, settings: &AOSettings) {
+fn calculate_ao(depth: &[f32; IMG_PIXEL_COUNT], ao: &mut Box<[f32; IMG_PIXEL_COUNT]>, light_dir: Vec3, settings: &AOSettings) {
+    let bias_dir = Vec2::new(-light_dir.x, light_dir.y).normalize_or_zero();
+    let light_dir_fact = 1.0 - light_dir.z.abs();
+    let bias_strength = light_dir_fact * if bias_dir.length_squared() < 0.1 { 0.0 } else { settings.bias as f32 / 100.0 };
+
     if settings.radius <= 0 || settings.strength <= 0 {
         for i in 0..IMG_PIXEL_COUNT {
             ao[i] = 1.0;
@@ -54,6 +58,7 @@ fn calculate_ao(depth: &[f32; IMG_PIXEL_COUNT], ao: &mut Box<[f32; IMG_PIXEL_COU
             let dd = depth[idx(x, y)];
             let mut slope_sum = 0.0;
             let pos = IVec2::new(x as i32, y as i32);
+            let mut weight_sum = 0.0;
             for (dir, length) in zip(&dirs, &lengths) {
                 let dir_slope = surface_slope.dot(dir.as_vec2()) / length;
                 let mut slope: f32 = 0.0;
@@ -65,9 +70,12 @@ fn calculate_ao(depth: &[f32; IMG_PIXEL_COUNT], ao: &mut Box<[f32; IMG_PIXEL_COU
                     let sample_depth: f32 = depth[idx(sample_pos.x as i32, sample_pos.y as i32)];
                     slope = slope.max((sample_depth - dd) / (i as f32 * length) - dir_slope);
                 }
-                slope_sum += slope;
+                let bias_w = bias_dir.dot(dir.as_vec2()).mul_add(0.5, 0.5);
+                let weight = 1.0.lerp(bias_w, bias_strength);
+                slope_sum += slope * weight;
+                weight_sum += weight;
             }
-            ao[idx(x, y)] = 1.0 - (slope_sum / dirs.len() as f32 * strength).saturate();
+            ao[idx(x, y)] = 1.0 - (slope_sum / weight_sum * strength).saturate();
         }
     }
 }
@@ -79,17 +87,18 @@ fn calculate_light(
     lit: &mut Box<[Vec3; IMG_PIXEL_COUNT]>,
     light: &LightingSettings,
 ) {
-    let mut light_dir: Vec3 = IVec3::from_array(light.light_dir).as_vec3().normalize_or_zero();
+    let mut light_dir: Vec3 = light.light_dir_vec3();
     if light_dir.length_squared() < 0.001 {
-        light_dir = Vec3::new(1.0, 3.0, 2.0).normalize();
+        light_dir = Vec3::new(1.0, -3.0, 2.0).normalize();
     }
 
     let lfact = 1.0 / light_dir.z.abs().max(0.1); // Make sure flat surface has the assigned color exactly -- within reason
 
+    let lvec = Vec3::new(-light_dir.x, -light_dir.y, light_dir.z);
     for i in 0..IMG_PIXEL_COUNT {
         let col = albedo[i];
         let normal = normal[i];
-        let l = light_dir.dot(normal).max(0.0) * lfact;
+        let l = lvec.dot(normal).max(0.0) * lfact;
         let amb = ao[i];
         let f = l.lerp(1.0, (light.ambient as f32 / 100.0).saturate()) * amb;
         lit[i] = col * f;
@@ -119,7 +128,7 @@ impl Default for TextureLayers {
 impl TextureLayers {
     pub fn recalculate(&mut self, ao_settings: &AOSettings, light: &LightingSettings) {
         calculate_normals(&self.depth, &mut self.normal);
-        calculate_ao(&self.depth, &mut self.ao, ao_settings);
+        calculate_ao(&self.depth, &mut self.ao, light.light_dir_vec3(), ao_settings);
         calculate_light(&self.albedo, &self.normal, &self.ao, &mut self.lit, light);
     }
 }

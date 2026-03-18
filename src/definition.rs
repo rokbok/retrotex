@@ -1,6 +1,6 @@
 use std::{fmt::Display, hash::Hash};
 
-use glam::{FloatExt, Vec2, Vec3, Vec4};
+use glam::{FloatExt, IVec3, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr, EnumString, VariantNames};
 
@@ -52,6 +52,12 @@ pub struct LightingSettings {
     pub ambient: i32,
 }
 
+impl LightingSettings {
+    pub fn light_dir_vec3(&self) -> Vec3 {
+        IVec3::from_array(self.light_dir).as_vec3().normalize_or_zero()
+    }
+}
+
 impl Default for LightingSettings {
     fn default() -> Self {
         Self {
@@ -65,13 +71,15 @@ impl Default for LightingSettings {
 pub struct AOSettings {
     pub radius: i32,
     pub strength: i32,
+    pub bias: i32,
 }
 
 impl Default for AOSettings {
     fn default() -> Self {
         Self {
             radius: 4,
-            strength: 25,
+            strength: 50,
+            bias: 50,
         }
     }
 }
@@ -283,7 +291,7 @@ impl TexturePass {
             } else {
                 self.rect.bevel.size as f32
             };
-            let bdepth = if self.rect.bevel.convex { -bdepth_abs } else { bdepth_abs };
+            let bdepth = if self.rect.bevel.convex { bdepth_abs } else { -bdepth_abs };
             let bt_lin = ((bevel_dist + 0.5) / self.rect.bevel.size.abs() as f32).saturate();
             let bt = match (self.rect.bevel.ease_in, self.rect.bevel.ease_out) {
                 (true, true) => if bt_lin < 0.5 { 0.5 * (bt_lin * 2.0).powi(2) } else { 1.0 - 0.5 * ((1.0 - bt_lin) * 2.0).powi(2) },
