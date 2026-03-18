@@ -51,6 +51,7 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
         ui.add(egui::DragValue::new(&mut def.ao_settings.radius).range(1..=(IMG_SIZE - 1)));
         ui.label("Bias:");
         ui.add(egui::DragValue::new(&mut def.ao_settings.bias).range(0..=200));
+        ui.checkbox(&mut def.ao_settings.ignore_surface_normal, "Ignore Surface Normal");
     });
 
     egui::ScrollArea::vertical().show(ui, | ui | {

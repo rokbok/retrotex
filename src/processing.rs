@@ -1,6 +1,6 @@
 use std::iter::zip;
 
-use glam::{FloatExt, IVec2, IVec3, Vec2, Vec3};
+use glam::{FloatExt, IVec2, Vec2, Vec3};
 
 use crate::{IMG_PIXEL_COUNT, IMG_SIZE, definition::{AOSettings, LightingSettings}, idx, idx_safe};
 
@@ -54,7 +54,7 @@ fn calculate_ao(depth: &[f32; IMG_PIXEL_COUNT], ao: &mut Box<[f32; IMG_PIXEL_COU
             let r = depth[idx_safe(x + 1, y)];
             let u = depth[idx_safe(x, y - 1)];
             let d = depth[idx_safe(x, y + 1)];
-            let surface_slope = Vec2::new(r - l, d - u) * 0.5;
+            let surface_slope = if settings.ignore_surface_normal { Vec2::ZERO } else { Vec2::new(r - l, d - u) * 0.5 };
             let dd = depth[idx(x, y)];
             let mut slope_sum = 0.0;
             let pos = IVec2::new(x as i32, y as i32);

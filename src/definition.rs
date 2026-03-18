@@ -72,6 +72,7 @@ pub struct AOSettings {
     pub radius: i32,
     pub strength: i32,
     pub bias: i32,
+    pub ignore_surface_normal: bool,
 }
 
 impl Default for AOSettings {
@@ -80,6 +81,7 @@ impl Default for AOSettings {
             radius: 4,
             strength: 50,
             bias: 50,
+            ignore_surface_normal: false,
         }
     }
 }
