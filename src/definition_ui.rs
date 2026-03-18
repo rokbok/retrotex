@@ -3,6 +3,9 @@ use std::{fmt::Write, mem::swap};
 use egui::Button;
 use crate::{IMG_SIZE, color::Color, definition::{TextureDefinition, TexturePass}, util::add_enum_dropdown};
 
+#[allow(unused_imports)]
+use log::{debug, error, log_enabled, info, warn, trace};
+
 pub enum PassOperation { Remove(usize) }
 
 fn add_full_width<T: egui::Widget>(ui: &mut egui::Ui, widget: T) -> egui::Response {
@@ -151,15 +154,51 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
 
                 if pass.rect.enabled {
                     ui.horizontal_wrapped(| ui | {
-                        ui.label("Dim:");
-                        ui.label("X:");
-                        ui.add(egui::DragValue::new(&mut pass.rect.x).range((-pass.rect.width + 1)..=(IMG_SIZE - 1)));
-                        ui.label("Y:");
-                        ui.add(egui::DragValue::new(&mut pass.rect.y).range((-pass.rect.height + 1)..=(IMG_SIZE - 1)));
+                        let wh = pass.rect.width / 2;
+                        let hh = pass.rect.height / 2;
+                        ui.label("CX:");
+                        let mut cx = pass.rect.x + wh;
+                        if ui.add(egui::DragValue::new(&mut cx).range((-pass.rect.width + 1 + wh)..=(IMG_SIZE - 1 + wh))).changed() {
+                            pass.rect.x = cx - wh;
+                        }
+                        ui.label("CY:");
+                        let mut cy = pass.rect.y + hh;
+                        if ui.add(egui::DragValue::new(&mut cy).range((-pass.rect.height + 1 + hh)..=(IMG_SIZE - 1 + hh))).changed() {
+                            pass.rect.y = cy - hh;
+                        }
                         ui.label("W:");
-                        ui.add(egui::DragValue::new(&mut pass.rect.width).range(1..=(2 * IMG_SIZE - 1)));
+                        let old_width = pass.rect.width;
+                        if ui.add(egui::DragValue::new(&mut pass.rect.width).range(1..=(2 * IMG_SIZE - 1))).changed() {
+                            let delta = pass.rect.width - old_width;
+    
+                            if delta % 2 == 0 {
+                                pass.rect.x -= delta / 2;
+                            } else {
+                                let old_center = 2 * pass.rect.x + old_width;
+                                let bias = match old_center.rem_euclid(4) {
+                                    0 | 1 => -1,
+                                    2 | 3 => 1,
+                                    _ => unreachable!(),
+                                };
+                                pass.rect.x += (-delta + bias) / 2;
+                            }
+                        }
                         ui.label("H:");
-                        ui.add(egui::DragValue::new(&mut pass.rect.height).range(1..=(2 * IMG_SIZE - 1)));
+                        let old_height = pass.rect.height;
+                        if ui.add(egui::DragValue::new(&mut pass.rect.height).range(1..=(2 * IMG_SIZE - 1))).changed() {
+                            let delta = pass.rect.height - old_height;
+                            if delta % 2 == 0 {
+                                pass.rect.y -= delta / 2;
+                            } else {
+                                let old_center = 2 * pass.rect.y + old_height;
+                                let bias = match old_center.rem_euclid(4) {
+                                    0 | 1 => -1,
+                                    2 | 3 => 1,
+                                    _ => unreachable!(),
+                                };
+                                pass.rect.y += (-delta + bias) / 2;
+                            }
+                        }
                     });
 
                     ui.horizontal_wrapped(| ui | {
