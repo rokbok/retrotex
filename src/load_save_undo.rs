@@ -1,4 +1,4 @@
-use std::{fs::File, io::BufWriter, path::Path};
+use std::{fs::File, io::{BufRead as _, BufReader, BufWriter, Read, Write as _}, path::Path};
 
 use crate::{IMG_PIXEL_COUNT, color::Color, definition::{self, TextureDefinition}};
 
@@ -42,12 +42,21 @@ impl LoadSaveUndo {
 
     pub fn load_by_name(&mut self, name: &str) -> Result<definition::TextureDefinition, String> {
         let path = Path::new(FILE_LOCATION).join(format!("{}.json", name));
-        let file_content = std::fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
-        let mut ret:  TextureDefinition = serde_json::from_str(&file_content).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        let mut reader = BufReader::new(File::open(&path).map_err(|e| format!("Failed to open file: {}", e))?);
+        let mut buffer = String::new();
+        reader.read_line(&mut buffer).map_err(|e| format!("Failed to read file: {}", e))?;
+        let version = buffer.trim().parse::<u32>().map_err(|e| format!("Failed to parse version: {}", e))?;
+        if version != TextureDefinition::VERSION {
+            return Err(format!("Unsupported version: {}, expected {}", version, TextureDefinition::VERSION));
+        }
+        
+        buffer.clear();
+        reader.read_to_string(&mut buffer).map_err(|e| format!("Failed to read file: {}", e))?;
+        let mut ret:  TextureDefinition = serde_json::from_str(&buffer).map_err(|e| format!("Failed to parse JSON: {}", e))?;
         ret.name = name.to_string();
         self.loaded = Some(name.to_string());
         self.undo_stack.clear();
-        self.undo_stack.push(file_content);
+        self.undo_stack.push(buffer);
         self.redo_index = 1;
         Ok(ret)
     }
@@ -70,7 +79,9 @@ impl LoadSaveUndo {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
         }
-        std::fs::write(path, self.undo_stack.last().unwrap()).map_err(|e| format!("Failed to write file: {}", e))?;
+        let mut writer = BufWriter::new(File::create(&path).map_err(|e| format!("Failed to create file: {}", e))?);
+        writer.write_all(format!("{}\n", TextureDefinition::VERSION).as_bytes()).map_err(|e| format!("Failed to write file: {}", e))?;
+        writer.write_all(self.undo_stack.last().unwrap().as_bytes()).map_err(|e| format!("Failed to write file: {}", e))?;
         Ok(())
     }
 

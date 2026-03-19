@@ -47,6 +47,7 @@ impl Display for BlendMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+#[serde(default)]
 pub struct LightingSettings {
     pub light_dir: [i32; 3],
     pub ambient: i32,
@@ -68,6 +69,7 @@ impl Default for LightingSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+#[serde(default)]
 pub struct AOSettings {
     pub radius: i32,
     pub strength: i32,
@@ -87,6 +89,7 @@ impl Default for AOSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+#[serde(default)]
 pub struct PerlinSettings {
     pub enabled: bool,
     pub scale: i32,
@@ -111,6 +114,7 @@ impl Default for PerlinSettings {
 
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+#[serde(default)]
 pub struct WhiteNoiseSettings {
     pub enabled: bool,
     pub scale: i32,
@@ -132,6 +136,7 @@ impl Default for WhiteNoiseSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+#[serde(default)]
 pub struct RoundOptions {
     pub enabled: bool,
     pub radius: i32,
@@ -139,6 +144,7 @@ pub struct RoundOptions {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+#[serde(default)]
 pub struct BevelOptions {
     pub enabled: bool,
     pub convex: bool,
@@ -149,6 +155,7 @@ pub struct BevelOptions {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+#[serde(default)]
 pub struct RectSettings {
     pub enabled: bool,
     pub x: i32,
@@ -167,24 +174,37 @@ impl Default for RectSettings {
             y: IMG_SIZE / 4,
             width: IMG_SIZE / 2,
             height: IMG_SIZE / 2,
-            round: RoundOptions {
-                enabled: false,
-                radius: 4,
-                anti_alias: false,
-            },
-            bevel: BevelOptions {
-                enabled: false,
-                convex: false,
-                size: 3,
-                steepness: 1,
-                ease_in: false,
-                ease_out: false,
-            },
+            round: RoundOptions::default(),
+            bevel: BevelOptions::default(),
+        }
+    }
+}
+
+impl Default for RoundOptions {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            radius: 4,
+            anti_alias: false,
+        }
+    }
+}
+
+impl Default for BevelOptions {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            convex: false,
+            size: 3,
+            steepness: 1,
+            ease_in: false,
+            ease_out: false,
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+#[serde(default)]
 pub struct TexturePass {
     pub name: Option<String>,
     pub enabled: bool,
@@ -331,6 +351,7 @@ pub struct GeneratedSample {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+#[serde(default)]
 pub struct TextureDefinition {
     #[serde(skip)] // This will be the filename
     pub name: String,
@@ -341,6 +362,8 @@ pub struct TextureDefinition {
 }
 
 impl TextureDefinition {
+    pub const VERSION: u32 = 1;
+
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
