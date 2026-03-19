@@ -1,0 +1,1 @@
+A texture generation tool for tech-looking textures in a retro style. Inspired by [Daivuk's tool](https://www.youtube.com/watch?v=qht68vFaa1M) for the game Quod.

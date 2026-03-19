@@ -32,7 +32,7 @@ impl LoadSaveUndo {
             },
             Err(e) => {
                 warn!("Failed to load texture definition, creating default: {}", e);
-                let def = TextureDefinition::new(name);
+                let def = TextureDefinition::demo(name);
                 self.loaded = Some(name.to_string());
                 self.save(&def).expect("Failed to save default texture definition");
                 def

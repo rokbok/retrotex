@@ -100,7 +100,7 @@ fn calculate_light(
         let normal = normal[i];
         let l = lvec.dot(normal).max(0.0) * lfact;
         let amb = ao[i];
-        let f = l.lerp(1.0, (light.ambient as f32 / 100.0).saturate()) * amb;
+        let f = 1.0.lerp(l, (light.impact as f32 / 100.0).saturate()) * amb;
         lit[i] = col * f;
     }
 }

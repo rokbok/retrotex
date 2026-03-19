@@ -49,21 +49,21 @@ impl Display for BlendMode {
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 #[serde(default)]
 pub struct LightingSettings {
-    pub light_dir: [i32; 3],
-    pub ambient: i32,
+    pub direction: [i32; 3],
+    pub impact: i32,
 }
 
 impl LightingSettings {
     pub fn light_dir_vec3(&self) -> Vec3 {
-        IVec3::from_array(self.light_dir).as_vec3().normalize_or_zero()
+        IVec3::from_array(self.direction).as_vec3().normalize_or_zero()
     }
 }
 
 impl Default for LightingSettings {
     fn default() -> Self {
         Self {
-            light_dir: [10, -50, 20],
-            ambient: 50,
+            direction: [10, -50, 20],
+            impact: 50,
         }
     }
 }
@@ -158,8 +158,6 @@ pub struct BevelOptions {
 #[serde(default)]
 pub struct RectSettings {
     pub enabled: bool,
-    pub x: i32,
-    pub y: i32,
     pub width: i32,
     pub height: i32,
     pub round: RoundOptions,
@@ -170,8 +168,6 @@ impl Default for RectSettings {
     fn default() -> Self {
         Self {
             enabled: false,
-            x: IMG_SIZE / 4,
-            y: IMG_SIZE / 4,
             width: IMG_SIZE / 2,
             height: IMG_SIZE / 2,
             round: RoundOptions::default(),
@@ -212,6 +208,8 @@ pub struct TexturePass {
     pub perlin: PerlinSettings,
     pub white_noise: WhiteNoiseSettings,
     pub blend_mode: BlendMode,
+    pub feature_x: i32,
+    pub feature_y: i32,
     pub rect: RectSettings,
 }
 
@@ -231,9 +229,9 @@ impl TexturePass {
                 seed: rand::random(),
                 ..Default::default()
             },
+            feature_x: l,
+            feature_y: t,
             rect: RectSettings {
-                x: l,
-                y: t,
                 width: r - l,
                 height: b - t,
                 ..Default::default()
@@ -244,7 +242,7 @@ impl TexturePass {
     
     fn apply(&self, dest: &mut Vec3, dest_d: &mut f32, x: i32, y: i32) {
         let (gen_x, gen_y) = if self.rect.enabled {
-            (x - self.rect.x, y - self.rect.y)
+            (x - self.feature_x, y - self.feature_y)
         } else {
             (x, y)
         };
@@ -285,7 +283,7 @@ impl TexturePass {
         };
 
         if self.rect.round.enabled {
-            let rad = (self.rect.round.radius + 2) as f32;
+            let rad = self.rect.round.radius as f32;
             let half_size = Vec2::new(0.5 * self.rect.width as f32, 0.5 * self.rect.height as f32);
             let rel = Vec2::new(gen_x as f32, gen_y as f32) + 0.5 - half_size;
             let d = util::box_sdf(rel, half_size - rad) - rad;
@@ -335,6 +333,8 @@ impl Default for TexturePass {
             name: None,
             enabled: true,
             color: Color::from_hex("#f48a71").unwrap(),
+            feature_x: IMG_SIZE / 4,
+            feature_y: IMG_SIZE / 4,
             blend_mode: BlendMode::Alpha,
             perlin: Default::default(),
             white_noise: Default::default(),
@@ -364,13 +364,105 @@ pub struct TextureDefinition {
 impl TextureDefinition {
     pub const VERSION: u32 = 1;
 
-    pub fn new(name: &str) -> Self {
+    pub fn demo(name: &str) -> Self {
         Self {
             name: name.to_string(),
-            background: Color::new(0, 0, 0, 255),
-            ao_settings: AOSettings::default(),
-            lighting_settings: LightingSettings::default(),
-            passes: vec![TexturePass::new()],
+            background: Color::from_hex("#3E3E3EFF").unwrap(),
+            ao_settings: AOSettings {
+                radius: 4,
+                strength: 50,
+                bias: 50,
+                ..Default::default()
+            },
+            lighting_settings: LightingSettings {
+                direction: [20, -50, 20],
+                impact: 50,
+            },
+            passes: vec![
+                TexturePass {
+                    name: Some("Rust".to_string()),
+                    color: Color::from_hex("#70310054").unwrap(),
+                    perlin: PerlinSettings {
+                        enabled: true,
+                        scale: 15,
+                        octaves: 4,
+                        seed: rand::random(),
+                        ..Default::default()
+                    },
+                    white_noise: Default::default(),
+                    ..Default::default()
+                },
+                TexturePass {
+                    name: Some("Frame".to_string()),
+                    color: Color::from_hex("#00000022").unwrap(),
+                    feature_x: 37,
+                    feature_y: 25,
+                    rect: RectSettings {
+                        enabled: true,
+                        width: 53,
+                        height: 98,
+                        round: RoundOptions {
+                            enabled: true,
+                            radius: 4,
+                            ..Default::default()
+                        },
+                        bevel: BevelOptions {
+                            enabled: true,
+                            convex: false,
+                            size: 3,
+                            steepness: 1,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                TexturePass {
+                    name: Some("Handle".to_string()),
+                    color: Color::from_hex("#00000000").unwrap(),
+                    feature_x: 79,
+                    feature_y: 70,
+                    rect: RectSettings {
+                        enabled: true,
+                        width: 6,
+                        height: 6,
+                        round: RoundOptions {
+                            enabled: true,
+                            radius: 6,
+                            ..Default::default()
+                        },
+                        bevel: BevelOptions {
+                            enabled: true,
+                            convex: true,
+                            size: 3,
+                            steepness: 1,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                TexturePass {
+                    name: Some("Window".to_string()),
+                    color: Color::from_hex("#304A4FFF").unwrap(),
+                    feature_x: 51,
+                    feature_y: 36,
+                    rect: RectSettings {
+                        enabled: true,
+                        width: 26,
+                        height: 17,
+                        bevel: BevelOptions {
+                            enabled: true,
+                            convex: false,
+                            size: 1,
+                            steepness: -8,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            ],
         }
     }
 

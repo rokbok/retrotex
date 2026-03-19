@@ -6,15 +6,24 @@ use crate::{IMG_SIZE, color::Color, definition::{TextureDefinition, TexturePass}
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
 
-pub enum PassOperation { Remove(usize) }
+pub enum PassOperation { Remove(usize), MoveUp(usize), MoveDown(usize) }
 
 fn add_full_width<T: egui::Widget>(ui: &mut egui::Ui, widget: T) -> egui::Response {
     let available_width = ui.available_width();
     ui.add_sized([available_width, 0.0], widget)
 }
 
-pub fn color_with_copy_paste(ui: &mut egui::Ui, color: &mut Color, clipboard: &mut arboard::Clipboard, tmp_str: &mut String) {
-    ui.color_edit_button_srgba_unmultiplied(&mut color.rgba);
+pub fn color_with_copy_paste(ui: &mut egui::Ui, color: &mut Color, with_alpha: bool, clipboard: &mut arboard::Clipboard, tmp_str: &mut String) {
+    if with_alpha {
+        ui.color_edit_button_srgba_unmultiplied(&mut color.rgba);
+    } else {
+        let mut rgb = [color.rgba[0], color.rgba[1], color.rgba[2]];
+        if ui.color_edit_button_srgb(&mut rgb).changed() {
+            color.rgba[0] = rgb[0];
+            color.rgba[1] = rgb[1];
+            color.rgba[2] = rgb[2];
+        }
+    }
     tmp_str.clear();
     color.write_hex(tmp_str).expect("Color string conversion failed");
     ui.label(&*tmp_str);
@@ -23,8 +32,12 @@ pub fn color_with_copy_paste(ui: &mut egui::Ui, color: &mut Color, clipboard: &m
     }
     if ui.button("Paste").clicked() {
         if let Ok(clipboard_str) = clipboard.get_text() {
+            let old_alpha = color.rgba[3];
             if let Ok(new_color) = Color::from_hex(&clipboard_str) {
                 *color = new_color;
+                if !with_alpha {
+                    color.rgba[3] = old_alpha;
+                }
             }
         }
     }
@@ -34,28 +47,30 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
     ui.heading(&def.name);
     ui.horizontal(| ui | {
         ui.label("Background:");
-        color_with_copy_paste(ui, &mut def.background, clipboard, tmp_str);
+        color_with_copy_paste(ui, &mut def.background, false, clipboard, tmp_str);
     });
+    ui.separator();
     ui.horizontal(| ui | {
-        ui.label("Light:");
-        ui.add(egui::DragValue::new(&mut def.lighting_settings.light_dir[0]).range(-100..=100));
-        ui.add(egui::DragValue::new(&mut def.lighting_settings.light_dir[1]).range(-100..=100));
-        ui.add(egui::DragValue::new(&mut def.lighting_settings.light_dir[2]).range(1..=100));
-        ui.label("Ambient:");
-        ui.add(egui::DragValue::new(&mut def.lighting_settings.ambient).range(0..=100));
+        ui.label("Light direction:");
+        ui.add(egui::DragValue::new(&mut def.lighting_settings.direction[0]).range(-100..=100));
+        ui.add(egui::DragValue::new(&mut def.lighting_settings.direction[1]).range(-100..=100));
+        ui.add(egui::DragValue::new(&mut def.lighting_settings.direction[2]).range(1..=100));
+        ui.label("Impact:");
+        ui.add(egui::DragValue::new(&mut def.lighting_settings.impact).range(0..=100)).on_hover_text("0 = unlit; 100 = maximum contrast");
     });
     ui.horizontal( | ui | {
-        ui.label("AO:");
-        ui.add(egui::DragValue::new(&mut def.ao_settings.strength).range(0..=100));
+        ui.label("Ambient occlusion:");
+        ui.add(egui::DragValue::new(&mut def.ao_settings.strength).range(0..=100)).on_hover_text("Ambient occlusion strength");
         ui.label("Radius:");
-        ui.add(egui::DragValue::new(&mut def.ao_settings.radius).range(1..=(IMG_SIZE - 1)));
+        ui.add(egui::DragValue::new(&mut def.ao_settings.radius).range(1..=(IMG_SIZE - 1))).on_hover_text("Higher = more distant occluders will contribute to AO");
         ui.label("Bias:");
-        ui.add(egui::DragValue::new(&mut def.ao_settings.bias).range(0..=200));
-        ui.checkbox(&mut def.ao_settings.ignore_surface_normal, "Ignore Surface Normal");
+        ui.add(egui::DragValue::new(&mut def.ao_settings.bias).range(0..=200)).on_hover_text("Bias ambient occlusion based on light direction");
+        ui.checkbox(&mut def.ao_settings.ignore_surface_normal, "Ignore Surface Normal").on_hover_text("Experimental; Probably not something you want to use");
     });
 
     egui::ScrollArea::vertical().show(ui, | ui | {
         let mut pass_op = Option::<PassOperation>::None;
+        let pass_count = def.passes.len();
         for (pass_idx, pass) in def.passes.iter_mut().enumerate() {
             ui.group(| ui | {
                 tmp_str.clear();
@@ -82,10 +97,18 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                     pass.name = None;
                 }
 
-                ui.checkbox(&mut pass.enabled, "Enabled");
+                ui.horizontal(| ui | {
+                    ui.checkbox(&mut pass.enabled, "Enabled");
+                    if pass_idx > 0 && ui.button("Move Up").clicked() {
+                        pass_op = Some(PassOperation::MoveUp(pass_idx));
+                    }
+                    if pass_idx < pass_count - 1 && ui.button("Move Down").clicked() {
+                        pass_op = Some(PassOperation::MoveDown(pass_idx));
+                    }
+                });
 
                 ui.horizontal_wrapped(| ui | {
-                    color_with_copy_paste(ui, &mut pass.color, clipboard, tmp_str);
+                    color_with_copy_paste(ui, &mut pass.color, true, clipboard, tmp_str);
                 });
 
                 ui.horizontal( | ui | {
@@ -130,77 +153,77 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                 ui.horizontal_wrapped(| ui | {
                     ui.checkbox(&mut pass.rect.enabled, "Rect");
                     if pass.rect.enabled {
-                        let mut l = pass.rect.x;
-                        ui.label("L:");
-                        if ui.add(egui::DragValue::new(&mut l).range((-IMG_SIZE + 1)..=(pass.rect.x + pass.rect.width - 1))).changed() {
-                            pass.rect.width += pass.rect.x - l;
-                            pass.rect.x = l;
+                                                let wh = pass.rect.width / 2;
+                        let hh = pass.rect.height / 2;
+                        ui.label("Center X:");
+                        let mut cx = pass.feature_x + wh;
+                        if ui.add(egui::DragValue::new(&mut cx).range((-pass.rect.width + 1 + wh)..=(IMG_SIZE - 1 + wh))).changed() {
+                            pass.feature_x = cx - wh;
                         }
-                        let mut t = pass.rect.y;
-                        ui.label("T:");
-                        if ui.add(egui::DragValue::new(&mut t).range((-IMG_SIZE + 1)..=(pass.rect.y + pass.rect.height - 1))).changed() {
-                            pass.rect.height += pass.rect.y - t;
-                            pass.rect.y = t;
+                        ui.label("Center Y:");
+                        let mut cy = pass.feature_y + hh;
+                        if ui.add(egui::DragValue::new(&mut cy).range((-pass.rect.height + 1 + hh)..=(IMG_SIZE - 1 + hh))).changed() {
+                            pass.feature_y = cy - hh;
                         }
-                        let mut r = pass.rect.x + pass.rect.width;
-                        ui.label("R:");
-                        if ui.add(egui::DragValue::new(&mut r).range((pass.rect.x + 1)..=(2 * IMG_SIZE - 1))).changed() {
-                            pass.rect.width = r - pass.rect.x;
+                        ui.label("Width:");
+                        let old_width = pass.rect.width;
+                        if ui.add(egui::DragValue::new(&mut pass.rect.width).range(1..=(2 * IMG_SIZE - 1))).changed() {
+                            let delta = pass.rect.width - old_width;
+    
+                            if delta % 2 == 0 {
+                                pass.feature_x -= delta / 2;
+                            } else {
+                                let old_center = 2 * pass.feature_x + old_width;
+                                let bias = match old_center.rem_euclid(4) {
+                                    0 | 1 => -1,
+                                    2 | 3 => 1,
+                                    _ => unreachable!(),
+                                };
+                                pass.feature_x += (-delta + bias) / 2;
+                            }
                         }
-                        let mut b = pass.rect.y + pass.rect.height;
-                        ui.label("B:");
-                        if ui.add(egui::DragValue::new(&mut b).range((pass.rect.y + 1)..=(2 * IMG_SIZE - 1))).changed() {
-                            pass.rect.height = b - pass.rect.y;
+                        ui.label("Height:");
+                        let old_height = pass.rect.height;
+                        if ui.add(egui::DragValue::new(&mut pass.rect.height).range(1..=(2 * IMG_SIZE - 1))).changed() {
+                            let delta = pass.rect.height - old_height;
+                            if delta % 2 == 0 {
+                                pass.feature_y -= delta / 2;
+                            } else {
+                                let old_center = 2 * pass.feature_y + old_height;
+                                let bias = match old_center.rem_euclid(4) {
+                                    0 | 1 => -1,
+                                    2 | 3 => 1,
+                                    _ => unreachable!(),
+                                };
+                                pass.feature_y += (-delta + bias) / 2;
+                            }
                         }
                     }
                 });
 
                 if pass.rect.enabled {
                     ui.horizontal_wrapped(| ui | {
-                        let wh = pass.rect.width / 2;
-                        let hh = pass.rect.height / 2;
-                        ui.label("CX:");
-                        let mut cx = pass.rect.x + wh;
-                        if ui.add(egui::DragValue::new(&mut cx).range((-pass.rect.width + 1 + wh)..=(IMG_SIZE - 1 + wh))).changed() {
-                            pass.rect.x = cx - wh;
+                        let mut l = pass.feature_x;
+                        ui.label("Left:");
+                        if ui.add(egui::DragValue::new(&mut l).range((-IMG_SIZE + 1)..=(pass.feature_x + pass.rect.width - 1))).changed() {
+                            pass.rect.width += pass.feature_x - l;
+                            pass.feature_x = l;
                         }
-                        ui.label("CY:");
-                        let mut cy = pass.rect.y + hh;
-                        if ui.add(egui::DragValue::new(&mut cy).range((-pass.rect.height + 1 + hh)..=(IMG_SIZE - 1 + hh))).changed() {
-                            pass.rect.y = cy - hh;
+                        let mut t = pass.feature_y;
+                        ui.label("Top:");
+                        if ui.add(egui::DragValue::new(&mut t).range((-IMG_SIZE + 1)..=(pass.feature_y + pass.rect.height - 1))).changed() {
+                            pass.rect.height += pass.feature_y - t;
+                            pass.feature_y = t;
                         }
-                        ui.label("W:");
-                        let old_width = pass.rect.width;
-                        if ui.add(egui::DragValue::new(&mut pass.rect.width).range(1..=(2 * IMG_SIZE - 1))).changed() {
-                            let delta = pass.rect.width - old_width;
-    
-                            if delta % 2 == 0 {
-                                pass.rect.x -= delta / 2;
-                            } else {
-                                let old_center = 2 * pass.rect.x + old_width;
-                                let bias = match old_center.rem_euclid(4) {
-                                    0 | 1 => -1,
-                                    2 | 3 => 1,
-                                    _ => unreachable!(),
-                                };
-                                pass.rect.x += (-delta + bias) / 2;
-                            }
+                        let mut r = pass.feature_x + pass.rect.width;
+                        ui.label("Right:");
+                        if ui.add(egui::DragValue::new(&mut r).range((pass.feature_x + 1)..=(2 * IMG_SIZE - 1))).changed() {
+                            pass.rect.width = r - pass.feature_x;
                         }
-                        ui.label("H:");
-                        let old_height = pass.rect.height;
-                        if ui.add(egui::DragValue::new(&mut pass.rect.height).range(1..=(2 * IMG_SIZE - 1))).changed() {
-                            let delta = pass.rect.height - old_height;
-                            if delta % 2 == 0 {
-                                pass.rect.y -= delta / 2;
-                            } else {
-                                let old_center = 2 * pass.rect.y + old_height;
-                                let bias = match old_center.rem_euclid(4) {
-                                    0 | 1 => -1,
-                                    2 | 3 => 1,
-                                    _ => unreachable!(),
-                                };
-                                pass.rect.y += (-delta + bias) / 2;
-                            }
+                        let mut b = pass.feature_y + pass.rect.height;
+                        ui.label("Bottom:");
+                        if ui.add(egui::DragValue::new(&mut b).range((pass.feature_y + 1)..=(2 * IMG_SIZE - 1))).changed() {
+                            pass.rect.height = b - pass.feature_y;
                         }
                     });
 
@@ -223,19 +246,19 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                         }
                         if ui.button("Flip").clicked() {
                             let mv = (pass.rect.width - pass.rect.height) / 2;
-                            pass.rect.x += mv;
-                            pass.rect.y -= mv;
+                            pass.feature_x += mv;
+                            pass.feature_y -= mv;
                             swap(&mut pass.rect.width, &mut pass.rect.height);
                         }
                         if ui.button("Clip").clicked() {
-                            pass.rect.x = pass.rect.x.max(0);
-                            pass.rect.y = pass.rect.y.max(0);
-                            pass.rect.width = pass.rect.width.min(IMG_SIZE - pass.rect.x);
-                            pass.rect.height = pass.rect.height.min(IMG_SIZE - pass.rect.y);
+                            pass.feature_x = pass.feature_x.max(0);
+                            pass.feature_y = pass.feature_y.max(0);
+                            pass.rect.width = pass.rect.width.min(IMG_SIZE - pass.feature_x);
+                            pass.rect.height = pass.rect.height.min(IMG_SIZE - pass.feature_y);
                         }
                         if ui.button("Full").clicked() {
-                            pass.rect.x = 0;
-                            pass.rect.y = 0;
+                            pass.feature_x = 0;
+                            pass.feature_y = 0;
                             pass.rect.width = IMG_SIZE;
                             pass.rect.height = IMG_SIZE;
                         }
@@ -243,32 +266,32 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
 
                     ui.horizontal_wrapped(| ui | {
                         ui.label("Align:");
-                        if ui.button("Left").clicked() {
-                            pass.rect.x = 0;
+                        if ui.button("Left").on_hover_text("Align to the left").clicked() {
+                            pass.feature_x = 0;
                         }
-                        if ui.button("HCenter").clicked() {
-                            pass.rect.x = (IMG_SIZE - pass.rect.width) / 2;
+                        if ui.button("HCenter").on_hover_text("Center horizontally").clicked() {
+                            pass.feature_x = (IMG_SIZE - pass.rect.width) / 2;
                         }
-                        if ui.button("Right").clicked() {
-                            pass.rect.x = IMG_SIZE - pass.rect.width;
+                        if ui.button("Right").on_hover_text("Align to the right").clicked() {
+                            pass.feature_x = IMG_SIZE - pass.rect.width;
                         }
-                        if ui.button("Top").clicked() {
-                            pass.rect.y = 0;
+                        if ui.button("Top").on_hover_text("Align to the top").clicked() {
+                            pass.feature_y = 0;
                         }
-                        if ui.button("VCenter").clicked() {
-                            pass.rect.y = (IMG_SIZE - pass.rect.height) / 2;
+                        if ui.button("VCenter").on_hover_text("Center vertically").clicked() {
+                            pass.feature_y = (IMG_SIZE - pass.rect.height) / 2;
                         }
-                        if ui.button("Bottom").clicked() {
-                            pass.rect.y = IMG_SIZE - pass.rect.height;
+                        if ui.button("Bottom").on_hover_text("Align to the bottom").clicked() {
+                            pass.feature_y = IMG_SIZE - pass.rect.height;
                         }
                     });
                     
                     ui.horizontal_wrapped(| ui | {
-                        ui.checkbox(&mut pass.rect.round.enabled, "Round");
+                        ui.checkbox(&mut pass.rect.round.enabled, "Round").on_hover_text("Round rect corners");
                         if pass.rect.round.enabled {
                             ui.label("Radius:");
-                            ui.add(egui::DragValue::new(&mut pass.rect.round.radius).range(0..=(pass.rect.width.min(pass.rect.height) / 2)));
-                            ui.checkbox(&mut pass.rect.round.anti_alias, "Anti-Alias");
+                            ui.add(egui::DragValue::new(&mut pass.rect.round.radius).range(1..=(pass.rect.width.min(pass.rect.height))));
+                            ui.checkbox(&mut pass.rect.round.anti_alias, "Anti-Alias").on_hover_text("Enable anti-aliasing for rounded corners (albedo only)");
                         }
                     });
 
@@ -287,7 +310,6 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                 }
 
                 ui.separator();
-
                 if add_full_width(ui, Button::new("Remove")).clicked() {
                     pass_op = Some(PassOperation::Remove(pass_idx));
                 }
@@ -298,6 +320,16 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
             match op {
                 PassOperation::Remove(idx) => {
                     def.passes.remove(idx);
+                }
+                PassOperation::MoveUp(idx) => {
+                    if idx > 0 {
+                        def.passes.swap(idx, idx - 1);
+                    }
+                }
+                PassOperation::MoveDown(idx) => {
+                    if idx < def.passes.len() - 1 {
+                        def.passes.swap(idx, idx + 1);
+                    }
                 }
             }
         }
