@@ -7,7 +7,7 @@ use strum_macros::{AsRefStr, EnumString, VariantNames};
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
 
-use crate::{IMG_SIZE, color::{Color, EditableColor}, noise, util};
+use crate::{IMG_SIZE, color::{Color, EditableColor}, noise::{self, gaussian}, util};
 
 pub const DEFAULT_NAME: &str = "unnamed";
 
@@ -99,9 +99,7 @@ pub struct PerlinSettings {
 }
 
 impl PerlinSettings {
-    pub fn random_seed() -> u32 {
-        rand::random::<u32>() % 0x1_00_00_00 // Avoid too large seeds to avoid floating point issues
-    }
+    pub const SEED_MASK: u32 = 0xff_ffff; // Avoid too large seeds to avoid floating point issues
 }
 
 impl Default for PerlinSettings {
@@ -219,6 +217,7 @@ pub struct TileOptions {
     pub shift: i32,
     pub shift_direction: TileShiftDirection,
     pub variation: i32,
+    pub variation_seed: u32,
 }
 
 impl Default for TileOptions {
@@ -232,6 +231,7 @@ impl Default for TileOptions {
             shift: 0,
             shift_direction: TileShiftDirection::Horizontal,
             variation: 0,
+            variation_seed: 0,
         }
     }
 }
@@ -287,6 +287,8 @@ impl TexturePass {
     fn apply(&self, dest: &mut Vec3, dest_d: &mut f32, x: i32, y: i32) {
         let mut gen_x = x;
         let mut gen_y = y;
+        let mut tile_x = 0;
+        let mut tile_y = 0;
         
         if self.rect.enabled {
             gen_x -= self.feature_x;
@@ -306,7 +308,9 @@ impl TexturePass {
                     return;
                 }
 
+                tile_x = gen_x / self.rect.tile.x_offset;
                 gen_x %= self.rect.tile.x_offset;
+                tile_y = gen_y / self.rect.tile.y_offset;
                 gen_y %= self.rect.tile.y_offset;
             }
 
@@ -316,16 +320,17 @@ impl TexturePass {
         }
 
         let mut src = if self.uses_both_colors() {
-            let mut color_t = -0.0;
+            let mut color_t = 0.0;
 
             if self.perlin.enabled {
                 let noise_scale = 0.002 * self.perlin.scale as f32;
-                let mut noise = noise::fbm2(noise_scale * x as f32, noise_scale * y as f32, self.perlin.octaves.max(1) as u32, 2.0, 0.5, self.perlin.seed as f32);
-                noise = noise.remap(-1.0, 1.0, 0.0, 1.0);
+                let seed = (self.perlin.seed ^ (tile_x as u32).wrapping_mul(0x1f1f1f1f) ^ (tile_y as u32).wrapping_mul(0x1e1e1e1e)) & PerlinSettings::SEED_MASK;
+                let mut noise = noise::fbm2(noise_scale * x as f32, noise_scale * y as f32, self.perlin.octaves.max(1) as u32, 2.0, 0.5, seed as f32);
+                noise = noise.abs();
                 if self.perlin.use_threshold {
                     noise = if noise >= (self.perlin.threshold as f32 / 100.0) { 1.0 } else { 0.0 };
                 }
-                color_t += noise.mul_add(2.0, -1.0);
+                color_t += noise;
             }
 
             if self.white_noise.enabled {
@@ -336,7 +341,14 @@ impl TexturePass {
                 color_t += noise.mul_add(2.0, -1.0);
             }
 
-            self.color.color().to_linear().lerp(self.color2.color().to_linear(), color_t.mul_add(0.5, 0.5).saturate())
+            if self.rect.enabled && self.rect.tile.enabled && self.rect.tile.variation > 0 {
+                let std = ((self.rect.tile.variation as f32) / 100.0).saturate();
+                color_t += std * gaussian(tile_x, tile_y, 1, self.rect.tile.variation_seed);
+            }
+
+            color_t = color_t.mul_add(0.5, 0.5).saturate();
+
+            self.color2.color().to_linear().lerp(self.color.color().to_linear(), color_t)
         } else {
             self.color.color().to_linear()
         };
@@ -454,7 +466,7 @@ impl TextureDefinition {
                         enabled: true,
                         scale: 15,
                         octaves: 4,
-                        seed: PerlinSettings::random_seed(),
+                        seed: rand::random::<u32>() & PerlinSettings::SEED_MASK,
                         ..Default::default()
                     },
                     white_noise: Default::default(),

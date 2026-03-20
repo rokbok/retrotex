@@ -140,3 +140,12 @@ pub fn white_noise(mut x: i32, mut y: i32, scale: i32, seed: u32) -> f32 {
     hasher.write_i32(y);
     hash_to_unit_f32(hasher.finish())
 }
+
+pub fn gaussian(x: i32, y: i32, scale: i32, seed: u32) -> f32 {
+    // Box-Muller transform
+    let u1 = white_noise(x, y, scale, seed);
+    let u2 = white_noise(x, y, scale, seed ^ 0xC99DFD3A);
+    let r = (-2.0 * u1.ln()).sqrt();
+    let theta = 2.0 * std::f32::consts::PI * u2;
+    r * theta.cos() // Standard normal distribution
+}

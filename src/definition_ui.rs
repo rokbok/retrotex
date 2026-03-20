@@ -1,7 +1,7 @@
 use std::{fmt::Write, mem::swap};
 
 use egui::{Button, TextEdit, text::{CCursor, CCursorRange}};
-use crate::{IMG_SIZE, color::{Color, EditableColor}, definition::{PerlinSettings, TextureDefinition, TexturePass}, util::add_enum_dropdown};
+use crate::{IMG_SIZE, color::{Color, EditableColor}, definition::{TextureDefinition, TexturePass}, util::add_enum_dropdown};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
@@ -11,6 +11,12 @@ pub enum PassOperation { Remove(usize), MoveUp(usize), MoveDown(usize) }
 fn add_full_width<T: egui::Widget>(ui: &mut egui::Ui, widget: T) -> egui::Response {
     let available_width = ui.available_width();
     ui.add_sized([available_width, 0.0], widget)
+}
+
+fn reseed_button(ui: &mut egui::Ui, seed: &mut u32) {
+    if ui.button("Re-seed").clicked() || *seed == 0 {
+        *seed = rand::random::<u32>();
+    }
 }
 
 pub fn add_color_edit<const ALPHA: bool>(ui: &mut egui::Ui, editable: &mut EditableColor<ALPHA>, monospace_width: f32) {
@@ -144,9 +150,7 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                         if pass.perlin.use_threshold {
                             ui.add(egui::DragValue::new(&mut pass.perlin.threshold).range(0..=100));
                         }
-                        if ui.button("Re-seed").clicked() {
-                            pass.perlin.seed = PerlinSettings::random_seed();
-                        }
+                        reseed_button(ui, &mut pass.perlin.seed);
                     }
                 });
                 
@@ -159,9 +163,7 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                         if pass.white_noise.use_threshold {
                             ui.add(egui::DragValue::new(&mut pass.white_noise.threshold).range(0..=100));
                         }
-                        if ui.button("Re-seed").clicked() {
-                            pass.white_noise.seed = rand::random();
-                        }
+                        reseed_button(ui, &mut pass.white_noise.seed);
                     }
                 });
 
@@ -341,9 +343,11 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                             }
 
                             ui.label("Variation:");
-                            ui.add(egui::DragValue::new(&mut pass.rect.tile.variation).range(0..=IMG_SIZE/2))
+                            ui.add(egui::DragValue::new(&mut pass.rect.tile.variation).range(0..=400))
                                 .on_hover_text("Per-tile variation, between the two colors selected");
-
+                            if pass.rect.tile.variation > 0 {
+                                reseed_button(ui, &mut pass.rect.tile.variation_seed);
+                            }
                         }
                     });
                 }
