@@ -204,6 +204,7 @@ pub struct TexturePass {
     pub name: Option<String>,
     pub enabled: bool,
     pub color: EditableColor<true>,
+    pub color2: EditableColor<true>,
     pub perlin: PerlinSettings,
     pub white_noise: WhiteNoiseSettings,
     pub blend_mode: BlendMode,
@@ -238,6 +239,10 @@ impl TexturePass {
             ..Default::default()
         }
     }
+
+    pub fn uses_both_colors(&self) -> bool {
+        self.perlin.enabled || self.white_noise.enabled
+    }
     
     fn apply(&self, dest: &mut Vec3, dest_d: &mut f32, x: i32, y: i32) {
         let (gen_x, gen_y) = if self.rect.enabled {
@@ -254,25 +259,31 @@ impl TexturePass {
             return;
         }
 
-        let mut src: Vec4 = self.color.color().to_linear();
+        let mut src = if self.uses_both_colors() {
+            let mut color_t = -0.0;
 
-        if self.perlin.enabled {
-            let noise_scale = 0.002 * self.perlin.scale as f32;
-            let mut noise = noise::fbm2(noise_scale * gen_x as f32, noise_scale * gen_y as f32, self.perlin.octaves.max(1) as u32, 2.0, 0.5, self.perlin.seed as f32);
-            noise = noise.remap(-1.0, 1.0, 0.0, 1.0);
-            if self.perlin.use_threshold {
-                noise = if noise >= (self.perlin.threshold as f32 / 100.0) { 1.0 } else { 0.0 };
+            if self.perlin.enabled {
+                let noise_scale = 0.002 * self.perlin.scale as f32;
+                let mut noise = noise::fbm2(noise_scale * gen_x as f32, noise_scale * gen_y as f32, self.perlin.octaves.max(1) as u32, 2.0, 0.5, self.perlin.seed as f32);
+                noise = noise.remap(-1.0, 1.0, 0.0, 1.0);
+                if self.perlin.use_threshold {
+                    noise = if noise >= (self.perlin.threshold as f32 / 100.0) { 1.0 } else { 0.0 };
+                }
+                color_t += noise.mul_add(2.0, -1.0);
             }
-            src.w *= noise.saturate();
-        }
 
-        if self.white_noise.enabled {
-            let mut noise = noise::white_noise(gen_x, gen_y, self.white_noise.scale, self.white_noise.seed);
-            if self.white_noise.use_threshold {
-                noise = if noise >= (self.white_noise.threshold as f32 / 100.0) { 1.0 } else { 0.0 };
+            if self.white_noise.enabled {
+                let mut noise = noise::white_noise(gen_x, gen_y, self.white_noise.scale, self.white_noise.seed);
+                if self.white_noise.use_threshold {
+                    noise = if noise >= (self.white_noise.threshold as f32 / 100.0) { 1.0 } else { 0.0 };
+                }
+                color_t += noise.mul_add(2.0, -1.0);
             }
-            src.w *= noise.saturate();
-        }
+
+            self.color.color().to_linear().lerp(self.color2.color().to_linear(), color_t.mul_add(0.5, 0.5).saturate())
+        } else {
+            self.color.color().to_linear()
+        };
 
         let mut bevel_dist = if self.rect.bevel.enabled {
             let from_boundary = Vec4::new(gen_x as f32 + 0.5, gen_y as f32 + 0.5, (self.rect.width - gen_x) as f32 - 0.5, (self.rect.height - gen_y) as f32 - 0.5);
@@ -332,6 +343,8 @@ impl Default for TexturePass {
             name: None,
             enabled: true,
             color: Color::from_hex("#f48a71").unwrap().into(),
+            color2: Color::from_hex("#71c8f4").unwrap().into(),
+
             feature_x: IMG_SIZE / 4,
             feature_y: IMG_SIZE / 4,
             blend_mode: BlendMode::Alpha,

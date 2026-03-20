@@ -118,26 +118,23 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                 if tmp_str.is_empty() && !name_response.has_focus() {
                     pass.name = None;
                 }
-
-                ui.horizontal(| ui | {
-                    ui.checkbox(&mut pass.enabled, "Enabled");
-                    if pass_idx > 0 && ui.button("Move Up").clicked() {
-                        pass_op = Some(PassOperation::MoveUp(pass_idx));
-                    }
-                    if pass_idx < pass_count - 1 && ui.button("Move Down").clicked() {
-                        pass_op = Some(PassOperation::MoveDown(pass_idx));
-                    }
-                });
+                
+                ui.checkbox(&mut pass.enabled, "Enabled");
 
                 ui.horizontal_wrapped(| ui | {
                     add_color_edit(ui, &mut pass.color, monospace_width);
                 });
 
+                if pass.uses_both_colors() {
+                    ui.horizontal_wrapped(| ui | {
+                        add_color_edit(ui, &mut pass.color2, monospace_width);
+                    });
+                }
+
                 ui.horizontal( | ui | {
                     ui.label("Blend:");
                     add_enum_dropdown(ui, &mut pass.blend_mode, "blend_mode", pass_idx, false);
                 });
-
 
                 ui.horizontal_wrapped(| ui | { 
                     ui.checkbox(&mut pass.perlin.enabled, "Perlin");
@@ -332,9 +329,24 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                 }
 
                 ui.separator();
-                if add_full_width(ui, Button::new("Remove")).clicked() {
-                    pass_op = Some(PassOperation::Remove(pass_idx));
-                }
+
+                ui.horizontal(| ui | {
+                    if pass_idx > 0 {
+                        let resp = ui.button("Up");
+                        if resp.clicked() {
+                            pass_op = Some(PassOperation::MoveUp(pass_idx));
+                        }
+                    }
+                    if pass_idx < pass_count - 1 {
+                        let resp = ui.button("Down");
+                        if resp.clicked() {
+                            pass_op = Some(PassOperation::MoveDown(pass_idx));
+                        }
+                    }
+                    if ui.add_sized([ui.available_width(), ui.spacing().interact_size.y], Button::new("Remove")).clicked() {
+                        pass_op = Some(PassOperation::Remove(pass_idx));
+                    }
+                });
             });
         }
 
