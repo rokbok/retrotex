@@ -7,8 +7,7 @@ use strum_macros::{AsRefStr, EnumString, VariantNames};
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
 
-use crate::{IMG_SIZE, noise, util};
-use crate::color::Color;
+use crate::{IMG_SIZE, color::{Color, EditableColor}, noise, util};
 
 pub const DEFAULT_NAME: &str = "unnamed";
 
@@ -204,7 +203,7 @@ impl Default for BevelOptions {
 pub struct TexturePass {
     pub name: Option<String>,
     pub enabled: bool,
-    pub color: Color,
+    pub color: EditableColor<true>,
     pub perlin: PerlinSettings,
     pub white_noise: WhiteNoiseSettings,
     pub blend_mode: BlendMode,
@@ -220,7 +219,7 @@ impl TexturePass {
         let t = rand::random_range(0..=IMG_SIZE - 40);
         let b = rand::random_range(t + 20..=IMG_SIZE);
         Self {
-            color: Color::random(),
+            color: Color::random().into(),
             perlin: PerlinSettings { 
                 seed: rand::random(),
                 ..Default::default()
@@ -255,7 +254,7 @@ impl TexturePass {
             return;
         }
 
-        let mut src: Vec4 = self.color.to_linear();
+        let mut src: Vec4 = self.color.color().to_linear();
 
         if self.perlin.enabled {
             let noise_scale = 0.002 * self.perlin.scale as f32;
@@ -332,7 +331,7 @@ impl Default for TexturePass {
         Self {
             name: None,
             enabled: true,
-            color: Color::from_hex("#f48a71").unwrap(),
+            color: Color::from_hex("#f48a71").unwrap().into(),
             feature_x: IMG_SIZE / 4,
             feature_y: IMG_SIZE / 4,
             blend_mode: BlendMode::Alpha,
@@ -355,7 +354,7 @@ pub struct GeneratedSample {
 pub struct TextureDefinition {
     #[serde(skip)] // This will be the filename
     pub name: String,
-    pub background: Color,
+    pub background: EditableColor<false>,
     pub ao_settings: AOSettings,
     pub lighting_settings: LightingSettings,
     pub passes: Vec<TexturePass>,
@@ -367,7 +366,7 @@ impl TextureDefinition {
     pub fn demo(name: &str) -> Self {
         Self {
             name: name.to_string(),
-            background: Color::from_hex("#3E3E3EFF").unwrap(),
+            background: Color::from_hex("#3E3E3EFF").unwrap().into(),
             ao_settings: AOSettings {
                 radius: 4,
                 strength: 50,
@@ -381,7 +380,7 @@ impl TextureDefinition {
             passes: vec![
                 TexturePass {
                     name: Some("Rust".to_string()),
-                    color: Color::from_hex("#70310054").unwrap(),
+                    color: Color::from_hex("#70310054").unwrap().into(),
                     perlin: PerlinSettings {
                         enabled: true,
                         scale: 15,
@@ -394,7 +393,7 @@ impl TextureDefinition {
                 },
                 TexturePass {
                     name: Some("Frame".to_string()),
-                    color: Color::from_hex("#00000022").unwrap(),
+                    color: Color::from_hex("#00000022").unwrap().into(),
                     feature_x: 37,
                     feature_y: 25,
                     rect: RectSettings {
@@ -419,7 +418,7 @@ impl TextureDefinition {
                 },
                 TexturePass {
                     name: Some("Handle".to_string()),
-                    color: Color::from_hex("#00000000").unwrap(),
+                    color: Color::from_hex("#00000000").unwrap().into(),
                     feature_x: 79,
                     feature_y: 70,
                     rect: RectSettings {
@@ -444,7 +443,7 @@ impl TextureDefinition {
                 },
                 TexturePass {
                     name: Some("Window".to_string()),
-                    color: Color::from_hex("#304A4FFF").unwrap(),
+                    color: Color::from_hex("#304A4FFF").unwrap().into(),
                     feature_x: 51,
                     feature_y: 36,
                     rect: RectSettings {
@@ -468,7 +467,7 @@ impl TextureDefinition {
 
     pub fn generate_pixel(&self, x: i32, y: i32) -> GeneratedSample {
         let mut ret = GeneratedSample {
-            albedo: self.background.to_linear().truncate(),
+            albedo: self.background.color().to_linear().truncate(),
             depth: 0.0,
         };
         for pass in &self.passes{
@@ -484,7 +483,7 @@ impl Default for TextureDefinition {
     fn default() -> Self {
         Self {
             name: DEFAULT_NAME.to_string(),
-            background: Color::new(0, 0, 0, 255),
+            background: Color::new(0, 0, 0, 255).into(),
             ao_settings: AOSettings::default(),
             lighting_settings: LightingSettings::default(),
             passes: vec![],

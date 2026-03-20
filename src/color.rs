@@ -41,7 +41,7 @@ impl Color {
     }
 
     pub fn write_hex<W: std::fmt::Write>(&self, out: &mut W) -> std::fmt::Result {
-        write!(out, "#{:02X}{:02X}{:02X}{:02X}", self.rgba[0], self.rgba[1], self.rgba[2], self.rgba[3])
+        write!(out, "#{:02x}{:02x}{:02x}{:02x}", self.rgba[0], self.rgba[1], self.rgba[2], self.rgba[3])
     }
 
     pub fn to_hex(&self) -> String {
@@ -114,6 +114,75 @@ impl From<Color> for [u8; 4] {
 impl From<Color> for egui::Color32 {
     fn from(c: Color) -> Self {
         egui::Color32::from_rgba_unmultiplied(c.rgba[0], c.rgba[1], c.rgba[2], c.rgba[3])
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EditableColor<const ALPHA: bool> {
+    c: Color,
+    pub edit_str: String,
+}
+
+impl<const ALPHA: bool> Serialize for EditableColor<ALPHA> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.c.serialize(serializer)
+    }
+}
+
+impl<'de, const ALPHA: bool> Deserialize<'de> for EditableColor<ALPHA> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut c = Color::deserialize(deserializer)?;
+        if !ALPHA {
+            c.rgba[3] = 255;
+        }
+        Ok(Self::new(c))
+    }
+}
+
+impl<const ALPHA: bool> EditableColor<ALPHA> {
+    pub fn new(c: Color) -> Self {
+        let mut strn = c.to_hex();
+        if !ALPHA {
+            strn.truncate(7);
+        }
+        Self { c, edit_str: strn }
+    }
+
+    pub fn color(&self) -> Color {
+        self.c
+    }
+
+    pub fn set_color(&mut self, new_color: Color) {
+        self.c = new_color;
+        self.edit_str.clear();
+        new_color.write_hex(&mut self.edit_str).unwrap();
+        if !ALPHA {
+            self.edit_str.truncate(7);
+        }
+    }
+
+    pub fn set_color_while_editing(&mut self, new_color: Color) {
+        self.c = new_color;
+    }
+    
+    pub(crate) fn update_edit_str(&mut self) {
+        self.edit_str.clear();
+        self.c.write_hex(&mut self.edit_str).unwrap();
+        if !ALPHA {
+            self.edit_str.truncate(7);
+        }
+    }
+}
+
+impl<const ALPHA: bool> Hash for EditableColor<ALPHA> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.c.hash(state);
+    }
+}
+
+impl<const ALPHA: bool> From<Color> for EditableColor<ALPHA> {
+    fn from(c: Color) -> Self {
+        Self { c, edit_str: c.to_hex() }
     }
 }
 

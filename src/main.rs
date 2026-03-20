@@ -74,7 +74,6 @@ struct ExampleApp {
     layers: TextureLayers,
     auto_save_at: Option<Instant>,
     load_save_undo: LoadSaveUndo,
-    clipboard: arboard::Clipboard,
     display_settings: DisplaySettings,
     output_dir: String,
     initial_generation_done: bool,
@@ -92,7 +91,6 @@ impl ExampleApp {
             layers: TextureLayers::default(),
             auto_save_at: None,
             load_save_undo,
-            clipboard: arboard::Clipboard::new().expect("Failed to initialize clipboard"),
             display_settings: DisplaySettings::default(),
             output_dir,
             initial_generation_done: false,
@@ -210,12 +208,11 @@ impl eframe::App for ExampleApp {
         });
 
         ctx.set_pixels_per_point(1.5);
-
  
         egui::SidePanel::right("right_panel")
             .default_width(400.0)
             .show(ctx, |ui| {
-                definition_ui::definition_ui(&mut self.def, &mut self.tmp_str, ui, &mut self.clipboard);
+                definition_ui::definition_ui(&mut self.def, &mut self.tmp_str, ui);
             });
         
         let new_hash = single_hash(&self.def);

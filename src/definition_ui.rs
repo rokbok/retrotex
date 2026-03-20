@@ -1,7 +1,7 @@
 use std::{fmt::Write, mem::swap};
 
-use egui::Button;
-use crate::{IMG_SIZE, color::Color, definition::{TextureDefinition, TexturePass}, util::add_enum_dropdown};
+use egui::{Button, TextEdit, text::{CCursor, CCursorRange}};
+use crate::{IMG_SIZE, color::{Color, EditableColor}, definition::{TextureDefinition, TexturePass}, util::add_enum_dropdown};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
@@ -13,41 +13,63 @@ fn add_full_width<T: egui::Widget>(ui: &mut egui::Ui, widget: T) -> egui::Respon
     ui.add_sized([available_width, 0.0], widget)
 }
 
-pub fn color_with_copy_paste(ui: &mut egui::Ui, color: &mut Color, with_alpha: bool, clipboard: &mut arboard::Clipboard, tmp_str: &mut String) {
-    if with_alpha {
-        ui.color_edit_button_srgba_unmultiplied(&mut color.rgba);
+pub fn add_color_edit<const ALPHA: bool>(ui: &mut egui::Ui, editable: &mut EditableColor<ALPHA>, monospace_width: f32) {
+    let mut color = editable.color();
+    let change = if ALPHA {
+        ui.color_edit_button_srgba_unmultiplied(&mut color.rgba).changed()
     } else {
         let mut rgb = [color.rgba[0], color.rgba[1], color.rgba[2]];
         if ui.color_edit_button_srgb(&mut rgb).changed() {
             color.rgba[0] = rgb[0];
             color.rgba[1] = rgb[1];
             color.rgba[2] = rgb[2];
+            true
+        } else {
+            false
+        }
+    };
+    if change {
+        editable.set_color(color);
+    }
+
+    let max_count = if ALPHA { 9 } else { 7 };
+    let output = TextEdit::singleline(&mut editable.edit_str)
+        .font(egui::TextStyle::Monospace)
+        .desired_width(monospace_width * max_count as f32)
+        .show(ui);
+    if output.response.gained_focus() {
+        let mut state = output.state;
+        state.cursor.set_char_range(Some(CCursorRange::two(CCursor::new(0), CCursor::new(editable.edit_str.len()))));
+        state.store(ui.ctx(), output.response.id);
+    }
+    if output.response.changed() {
+        if editable.edit_str.len() > max_count {
+            editable.edit_str.truncate(max_count);
+            ui.ctx().request_repaint();
+        }
+        if let Ok(new_color) = Color::from_hex(&editable.edit_str) {
+            editable.set_color_while_editing(new_color);
+            ui.ctx().request_repaint();
         }
     }
-    tmp_str.clear();
-    color.write_hex(tmp_str).expect("Color string conversion failed");
-    ui.label(&*tmp_str);
-    if ui.button("Copy").clicked() {
-        ui.ctx().copy_text(tmp_str.clone());
-    }
-    if ui.button("Paste").clicked() {
-        if let Ok(clipboard_str) = clipboard.get_text() {
-            let old_alpha = color.rgba[3];
-            if let Ok(new_color) = Color::from_hex(&clipboard_str) {
-                *color = new_color;
-                if !with_alpha {
-                    color.rgba[3] = old_alpha;
-                }
-            }
-        }
+    if output.response.lost_focus() {
+        editable.update_edit_str();
+        ui.ctx().request_repaint();
     }
 }
 
-pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut egui::Ui, clipboard: &mut arboard::Clipboard) {
+pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut egui::Ui) {
+    let monospace_id = egui::TextStyle::Monospace.resolve(ui.style());
+
+    // Estimate width of one character (monospace assumption works best)
+    let monospace_width = ui.fonts_mut(|f| {
+        f.glyph_width(&monospace_id, 'W') // use a wide character as baseline
+    });
+
     ui.heading(&def.name);
     ui.horizontal(| ui | {
         ui.label("Background:");
-        color_with_copy_paste(ui, &mut def.background, false, clipboard, tmp_str);
+        add_color_edit(ui, &mut def.background, monospace_width);
     });
     ui.separator();
     ui.horizontal(| ui | {
@@ -108,7 +130,7 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                 });
 
                 ui.horizontal_wrapped(| ui | {
-                    color_with_copy_paste(ui, &mut pass.color, true, clipboard, tmp_str);
+                    add_color_edit(ui, &mut pass.color, monospace_width);
                 });
 
                 ui.horizontal( | ui | {
