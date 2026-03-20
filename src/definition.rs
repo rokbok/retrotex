@@ -98,6 +98,12 @@ pub struct PerlinSettings {
     pub threshold: i32,
 }
 
+impl PerlinSettings {
+    pub fn random_seed() -> u32 {
+        rand::random::<u32>() % 0x1_00_00_00 // Avoid too large seeds to avoid floating point issues
+    }
+}
+
 impl Default for PerlinSettings {
     fn default() -> Self {
         Self {
@@ -161,6 +167,7 @@ pub struct RectSettings {
     pub height: i32,
     pub round: RoundOptions,
     pub bevel: BevelOptions,
+    pub tile: TileOptions,
 }
 
 impl Default for RectSettings {
@@ -171,6 +178,7 @@ impl Default for RectSettings {
             height: IMG_SIZE / 2,
             round: RoundOptions::default(),
             bevel: BevelOptions::default(),
+            tile: TileOptions::default(),
         }
     }
 }
@@ -194,6 +202,36 @@ impl Default for BevelOptions {
             steepness: 1,
             ease_in: false,
             ease_out: false,
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize, AsRefStr, EnumString, VariantNames)]
+pub enum TileShiftDirection { Horizontal, Vertical }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+pub struct TileOptions {
+    pub enabled: bool,
+    pub x_offset: i32,
+    pub y_offset: i32,
+    pub x_count: i32,
+    pub y_count: i32,
+    pub shift: i32,
+    pub shift_direction: TileShiftDirection,
+    pub variation: i32,
+}
+
+impl Default for TileOptions {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            x_offset: 32,
+            y_offset: 32,
+            x_count: 3,
+            y_count: 3,
+            shift: 0,
+            shift_direction: TileShiftDirection::Horizontal,
+            variation: 0,
         }
     }
 }
@@ -241,22 +279,40 @@ impl TexturePass {
     }
 
     pub fn uses_both_colors(&self) -> bool {
-        self.perlin.enabled || self.white_noise.enabled
+        self.perlin.enabled
+        || self.white_noise.enabled
+        || (self.rect.enabled && self.rect.tile.enabled && self.rect.tile.variation > 0)
     }
     
     fn apply(&self, dest: &mut Vec3, dest_d: &mut f32, x: i32, y: i32) {
-        let (gen_x, gen_y) = if self.rect.enabled {
-            (x - self.feature_x, y - self.feature_y)
-        } else {
-            (x, y)
-        };
+        let mut gen_x = x;
+        let mut gen_y = y;
+        
+        if self.rect.enabled {
+            gen_x -= self.feature_x;
+            gen_y -= self.feature_y;
 
-        if gen_x < 0 || gen_y < 0 {
-            return;
-        }
+            if !self.rect.tile.enabled {
+                if gen_x < 0 || gen_y < 0 {
+                    return;
+                }
+            } else {
+                match self.rect.tile.shift_direction {
+                    TileShiftDirection::Horizontal => gen_x -= (gen_y / self.rect.tile.y_offset) * self.rect.tile.shift,
+                    TileShiftDirection::Vertical => gen_y -= (gen_x / self.rect.tile.x_offset) * self.rect.tile.shift,
+                }
 
-        if self.rect.enabled && (gen_x >= self.rect.width || gen_y >= self.rect.height) {
-            return;
+                if gen_x < 0 || gen_y < 0 || gen_x >= self.rect.tile.x_offset * self.rect.tile.x_count || gen_y >= self.rect.tile.y_offset * self.rect.tile.y_count {
+                    return;
+                }
+
+                gen_x %= self.rect.tile.x_offset;
+                gen_y %= self.rect.tile.y_offset;
+            }
+
+            if gen_x >= self.rect.width || gen_y >= self.rect.height {
+                return;
+            }
         }
 
         let mut src = if self.uses_both_colors() {
@@ -264,7 +320,7 @@ impl TexturePass {
 
             if self.perlin.enabled {
                 let noise_scale = 0.002 * self.perlin.scale as f32;
-                let mut noise = noise::fbm2(noise_scale * gen_x as f32, noise_scale * gen_y as f32, self.perlin.octaves.max(1) as u32, 2.0, 0.5, self.perlin.seed as f32);
+                let mut noise = noise::fbm2(noise_scale * x as f32, noise_scale * y as f32, self.perlin.octaves.max(1) as u32, 2.0, 0.5, self.perlin.seed as f32);
                 noise = noise.remap(-1.0, 1.0, 0.0, 1.0);
                 if self.perlin.use_threshold {
                     noise = if noise >= (self.perlin.threshold as f32 / 100.0) { 1.0 } else { 0.0 };
@@ -273,7 +329,7 @@ impl TexturePass {
             }
 
             if self.white_noise.enabled {
-                let mut noise = noise::white_noise(gen_x, gen_y, self.white_noise.scale, self.white_noise.seed);
+                let mut noise = noise::white_noise(x, y, self.white_noise.scale, self.white_noise.seed);
                 if self.white_noise.use_threshold {
                     noise = if noise >= (self.white_noise.threshold as f32 / 100.0) { 1.0 } else { 0.0 };
                 }
@@ -398,7 +454,7 @@ impl TextureDefinition {
                         enabled: true,
                         scale: 15,
                         octaves: 4,
-                        seed: rand::random(),
+                        seed: PerlinSettings::random_seed(),
                         ..Default::default()
                     },
                     white_noise: Default::default(),

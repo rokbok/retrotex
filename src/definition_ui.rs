@@ -1,7 +1,7 @@
 use std::{fmt::Write, mem::swap};
 
 use egui::{Button, TextEdit, text::{CCursor, CCursorRange}};
-use crate::{IMG_SIZE, color::{Color, EditableColor}, definition::{TextureDefinition, TexturePass}, util::add_enum_dropdown};
+use crate::{IMG_SIZE, color::{Color, EditableColor}, definition::{PerlinSettings, TextureDefinition, TexturePass}, util::add_enum_dropdown};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
@@ -123,13 +123,10 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
 
                 ui.horizontal_wrapped(| ui | {
                     add_color_edit(ui, &mut pass.color, monospace_width);
+                    if pass.uses_both_colors() {
+                            add_color_edit(ui, &mut pass.color2, monospace_width);
+                    }
                 });
-
-                if pass.uses_both_colors() {
-                    ui.horizontal_wrapped(| ui | {
-                        add_color_edit(ui, &mut pass.color2, monospace_width);
-                    });
-                }
 
                 ui.horizontal( | ui | {
                     ui.label("Blend:");
@@ -148,7 +145,7 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                             ui.add(egui::DragValue::new(&mut pass.perlin.threshold).range(0..=100));
                         }
                         if ui.button("Re-seed").clicked() {
-                            pass.perlin.seed = rand::random();
+                            pass.perlin.seed = PerlinSettings::random_seed();
                         }
                     }
                 });
@@ -324,6 +321,29 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                             ui.label("Ease:");
                             ui.checkbox(&mut pass.rect.bevel.ease_in, "In");
                             ui.checkbox(&mut pass.rect.bevel.ease_out, "Out");
+                        }
+                    });
+
+                    ui.horizontal_wrapped(| ui | {
+                        ui.checkbox(&mut pass.rect.tile.enabled, "Tile");
+                        if pass.rect.tile.enabled {
+                            ui.label("Offset:");
+                            ui.add(egui::DragValue::new(&mut pass.rect.tile.x_offset).range(2..=IMG_SIZE));
+                            ui.add(egui::DragValue::new(&mut pass.rect.tile.y_offset).range(2..=IMG_SIZE));
+                            ui.label("Count:");
+                            ui.add(egui::DragValue::new(&mut pass.rect.tile.x_count).range(1..=IMG_SIZE/2));
+                            ui.add(egui::DragValue::new(&mut pass.rect.tile.y_count).range(1..=IMG_SIZE/2));
+                            ui.label("Shift:");
+                            ui.add(egui::DragValue::new(&mut pass.rect.tile.shift).range(-IMG_SIZE/2..=IMG_SIZE/2));
+                            if pass.rect.tile.shift > 0 {
+                                ui.label("Direction:");
+                                add_enum_dropdown(ui, &mut pass.rect.tile.shift_direction, "tile_shift_direction", pass_idx, false);
+                            }
+
+                            ui.label("Variation:");
+                            ui.add(egui::DragValue::new(&mut pass.rect.tile.variation).range(0..=IMG_SIZE/2))
+                                .on_hover_text("Per-tile variation, between the two colors selected");
+
                         }
                     });
                 }
