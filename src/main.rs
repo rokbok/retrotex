@@ -1,7 +1,7 @@
 // TODO:
 // - Transition serialized Colors in u8
 
-use std::{fmt::Write as _, hash::Hash, time::{Duration, Instant}};
+use std::{hash::Hash, time::{Duration, Instant}};
 
 use clap::{Parser as _};
 use eframe::egui;
@@ -9,13 +9,14 @@ use egui::{Color32, ColorImage, TextureHandle};
 use glam::FloatExt as _;
 use strum_macros::{AsRefStr, EnumString, VariantNames};
 
-use crate::{load_save_undo::LoadSaveUndo, processing::TextureLayers, util::{add_enum_dropdown, single_hash}};
+use crate::{load_save_undo::LoadSaveUndo, preview_ui::OngoingDrag, processing::TextureLayers, util::single_hash};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
 
 pub mod definition;
 pub mod definition_ui;
+pub mod preview_ui;
 pub mod load_save_undo;
 pub mod util;
 pub mod noise;
@@ -67,7 +68,7 @@ struct TextureHandleSet {
     lit: TextureHandle,
 }
 
-struct ExampleApp {
+struct RetroTexApp {
     def: definition::TextureDefinition,
     tmp_str: String,
     textures: Option<TextureHandleSet>,
@@ -77,9 +78,10 @@ struct ExampleApp {
     display_settings: DisplaySettings,
     output_dir: String,
     initial_generation_done: bool,
+    drag: Option<OngoingDrag>,
 }
 
-impl ExampleApp {
+impl RetroTexApp {
     fn new(output_dir: String) -> Self {
         let mut load_save_undo = LoadSaveUndo::new();
         let def = load_save_undo.load_by_name_or_create(definition::DEFAULT_NAME);
@@ -94,6 +96,7 @@ impl ExampleApp {
             display_settings: DisplaySettings::default(),
             output_dir,
             initial_generation_done: false,
+            drag: None,
         };
 
         ret
@@ -184,9 +187,12 @@ impl ExampleApp {
     }
 }
 
-impl eframe::App for ExampleApp {
+impl eframe::App for RetroTexApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let mut regen_needed = self.textures.is_none();
+        if self.textures.is_none() {
+             self.regenerate(Some(ctx));
+        }
+
         let old_hash = single_hash(&self.def);
         let closing = ctx.input(|i| {
             if i.key_pressed(egui::Key::F10) {
@@ -195,13 +201,11 @@ impl eframe::App for ExampleApp {
             if i.key_pressed(egui::Key::Z) && i.modifiers.ctrl {
                 if let Some(undo_def) = self.load_save_undo.undo() {
                     self.def = undo_def;
-                    regen_needed = true;
                 }
             }
             if i.key_pressed(egui::Key::Y) && i.modifiers.ctrl {
                 if let Some(redo_def) = self.load_save_undo.redo() {
                     self.def = redo_def;
-                    regen_needed = true;
                 }
             }
             i.viewport().close_requested()
@@ -215,70 +219,16 @@ impl eframe::App for ExampleApp {
                 definition_ui::definition_ui(&mut self.def, &mut self.tmp_str, ui);
             });
         
+        egui::CentralPanel::default().show(ctx, |ui| {
+            self.add_preview(ui);
+        });
+
         let new_hash = single_hash(&self.def);
         if old_hash != new_hash {
-            self.auto_save_at = Some(Instant::now() + Duration::from_millis(AUTO_SAVE_DELAY_MILLIS));
-            regen_needed = true;
-        }
-
-        if regen_needed {
             self.regenerate(Some(ctx));
+            self.auto_save_at = Some(Instant::now() + Duration::from_millis(AUTO_SAVE_DELAY_MILLIS));
+            ctx.request_repaint();
         }
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.horizontal(| ui | {
-                ui.label("Display Mode:");
-                add_enum_dropdown(ui, &mut self.display_settings.mode, "display_mode", 0, false);
-            });
-            self.textures.as_ref().expect("Texture not initialized yet?");
-            if let Some(tex) = &self.textures {
-                ui.centered_and_justified(| ui | {
-                    let available = ui.available_rect_before_wrap();
-                    let mnsz = available.width().min(available.height());
-                    let iscale = (mnsz / (IMG_SIZE as f32)).floor().max(1.0) as i32;
-                    let display_size = IMG_SIZE as f32 * iscale as f32;
-                    let tex = match self.display_settings.mode {
-                        DisplayMode::Lit => &tex.lit,
-                        DisplayMode::Albedo => &tex.albedo,
-                        DisplayMode::Depth => &tex.depth,
-                        DisplayMode::Normal => &tex.normal,
-                        DisplayMode::AmbientOcclusion => &tex.ao,
-                    };
-                    let sz = egui::Vec2::new(display_size, display_size);
-                    let rect = egui::Rect::from_center_size(available.center(), sz);
-                    let resp = ui.allocate_rect(rect, egui::Sense::hover());
-                    let img = egui::Image::new(tex)
-                        .fit_to_exact_size(sz)
-                        .sense(egui::Sense::hover());
-                    img.paint_at(ui, rect);
-                    if let Some(hover_pos) = resp.hover_pos() {
-                        resp.on_hover_ui_at_pointer(| ui | {
-                            let x = ((hover_pos.x - rect.min.x) / iscale as f32).floor() as i32;
-                            let y = ((hover_pos.y - rect.min.y) / iscale as f32).floor() as i32;
-                            write!(self.tmp_str, "Hovering at ({:.1}, {:.1})", x, y).unwrap();
-                            if x >= 0 && x < IMG_SIZE && y >= 0 && y < IMG_SIZE {
-                                self.tmp_str.clear();
-                                let index = idx(x, y);
-                                write!(self.tmp_str, "Pixel ({}, {})", x, y).unwrap();
-
-                                let albedo = self.layers.albedo[index];
-                                write!(self.tmp_str, "\nAlbedo: ({:.3}, {:.3}, {:.3})", albedo.x, albedo.y, albedo.z).unwrap();
-
-                                let depth = self.layers.depth[index];
-                                write!(self.tmp_str, "\nDepth: {:.3}", depth).unwrap();
-
-                                let normal = self.layers.normal[index];
-                                write!(self.tmp_str, "\nNormal: ({:.3}, {:.3}, {:.3})", normal.x, normal.y, normal.z).unwrap();
-
-                                ui.label(&self.tmp_str);
-                            } else {
-                                ui.label("Outside");
-                            }
-                        });
-                    }
-                });
-            }
-        });
 
         if let Some(inst) = self.auto_save_at {
             if closing || Instant::now() >= inst {
@@ -314,8 +264,8 @@ fn main() {
     };
 
     eframe::run_native(
-        ExampleApp::name(),
+        RetroTexApp::name(),
         native_options,
-        Box::new(|_| Ok(Box::new(ExampleApp::new(output)))),
+        Box::new(|_| Ok(Box::new(RetroTexApp::new(output)))),
     ).expect("Error running app")
 }
