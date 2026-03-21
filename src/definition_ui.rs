@@ -130,7 +130,7 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                 ui.horizontal_wrapped(| ui | {
                     add_color_edit(ui, &mut pass.color, monospace_width);
                     if pass.uses_both_colors() {
-                            add_color_edit(ui, &mut pass.color2, monospace_width);
+                        add_color_edit(ui, &mut pass.color2, monospace_width);
                     }
                 });
 
@@ -138,6 +138,8 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                     ui.label("Blend:");
                     add_enum_dropdown(ui, &mut pass.blend_mode, "blend_mode", pass_idx, false);
                 });
+
+                ui.separator();
 
                 ui.horizontal_wrapped(| ui | { 
                     ui.checkbox(&mut pass.perlin.enabled, "Perlin");
@@ -166,6 +168,13 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                         reseed_button(ui, &mut pass.white_noise.seed);
                     }
                 });
+
+                if pass.perlin.enabled || pass.white_noise.enabled {
+                    ui.horizontal_wrapped(| ui | {
+                        ui.label("Noise Mode:");
+                        add_enum_dropdown(ui, &mut pass.noise_mode, "noise_mode", pass_idx, false);
+                    });
+                }
 
                 ui.separator();
                 ui.horizontal_wrapped(| ui | {
@@ -341,15 +350,18 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                                 ui.label("Direction:");
                                 add_enum_dropdown(ui, &mut pass.rect.tile.shift_direction, "tile_shift_direction", pass_idx, false);
                             }
-
-                            ui.label("Variation:");
-                            ui.add(egui::DragValue::new(&mut pass.rect.tile.variation).range(0..=400))
-                                .on_hover_text("Per-tile variation, between the two colors selected");
-                            if pass.rect.tile.variation > 0 {
-                                reseed_button(ui, &mut pass.rect.tile.variation_seed);
-                            }
                         }
                     });
+                    if pass.rect.tile.enabled {
+                        ui.horizontal_wrapped(| ui | {
+                            ui.checkbox(&mut pass.rect.tile.variation_enabled, "Variation");
+                            if pass.rect.tile.variation_enabled {
+                                ui.label("Strength:");
+                                ui.add(egui::DragValue::new(&mut pass.rect.tile.variation).range(1..=400));
+                                reseed_button(ui, &mut pass.rect.tile.variation_seed);
+                            }
+                        });
+                    };
                 }
 
                 ui.separator();

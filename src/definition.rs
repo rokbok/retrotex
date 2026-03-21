@@ -138,6 +138,12 @@ impl Default for WhiteNoiseSettings {
     }
 }
 
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize, AsRefStr, EnumString, VariantNames, Default)]
+pub enum NoiseMode {
+    #[default] Color,
+    Alpha
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 #[serde(default)]
 pub struct RoundOptions {
@@ -216,6 +222,7 @@ pub struct TileOptions {
     pub y_count: i32,
     pub shift: i32,
     pub shift_direction: TileShiftDirection,
+    pub variation_enabled: bool,
     pub variation: i32,
     pub variation_seed: u32,
 }
@@ -230,6 +237,7 @@ impl Default for TileOptions {
             y_count: 3,
             shift: 0,
             shift_direction: TileShiftDirection::Horizontal,
+            variation_enabled: false,
             variation: 0,
             variation_seed: 0,
         }
@@ -242,9 +250,10 @@ pub struct TexturePass {
     pub name: Option<String>,
     pub enabled: bool,
     pub color: EditableColor<true>,
-    pub color2: EditableColor<true>,
+    pub color2: EditableColor<false>,
     pub perlin: PerlinSettings,
     pub white_noise: WhiteNoiseSettings,
+    pub noise_mode: NoiseMode,
     pub blend_mode: BlendMode,
     pub feature_x: i32,
     pub feature_y: i32,
@@ -279,9 +288,9 @@ impl TexturePass {
     }
 
     pub fn uses_both_colors(&self) -> bool {
-        self.perlin.enabled
-        || self.white_noise.enabled
-        || (self.rect.enabled && self.rect.tile.enabled && self.rect.tile.variation > 0)
+           (self.perlin.enabled  && self.noise_mode == NoiseMode::Color)
+        || (self.white_noise.enabled && self.noise_mode == NoiseMode::Color)
+        || (self.rect.enabled && self.rect.tile.enabled && self.rect.tile.variation_enabled)
     }
     
     fn apply(&self, dest: &mut Vec3, dest_d: &mut f32, x: i32, y: i32) {
@@ -319,39 +328,45 @@ impl TexturePass {
             }
         }
 
+        
+        let mut noise_val = 0.0;
+        if self.perlin.enabled {
+            let noise_scale = 0.002 * self.perlin.scale as f32;
+            let seed = (self.perlin.seed ^ (tile_x as u32).wrapping_mul(0x1f1f1f1f) ^ (tile_y as u32).wrapping_mul(0x1e1e1e1e)) & PerlinSettings::SEED_MASK;
+            let mut noise = noise::fbm2(noise_scale * x as f32, noise_scale * y as f32, self.perlin.octaves.max(1) as u32, 2.0, 0.5, seed as f32);
+            if self.perlin.use_threshold {
+                noise = if noise >= (self.perlin.threshold as f32 / 100.0).mul_add(2.0, -1.0) { 1.0 } else { 0.0 };
+            }
+            noise_val += noise;
+        }
+
+        if self.white_noise.enabled {
+            let mut noise = noise::white_noise(x, y, self.white_noise.scale, self.white_noise.seed);
+            if self.white_noise.use_threshold {
+                noise = if noise >= (self.white_noise.threshold as f32 / 100.0) { 1.0 } else { 0.0 };
+            }
+            noise_val += noise.mul_add(2.0, -1.0);
+        }
+
         let mut src = if self.uses_both_colors() {
-            let mut color_t = 0.0;
-
-            if self.perlin.enabled {
-                let noise_scale = 0.002 * self.perlin.scale as f32;
-                let seed = (self.perlin.seed ^ (tile_x as u32).wrapping_mul(0x1f1f1f1f) ^ (tile_y as u32).wrapping_mul(0x1e1e1e1e)) & PerlinSettings::SEED_MASK;
-                let mut noise = noise::fbm2(noise_scale * x as f32, noise_scale * y as f32, self.perlin.octaves.max(1) as u32, 2.0, 0.5, seed as f32);
-                noise = noise.abs();
-                if self.perlin.use_threshold {
-                    noise = if noise >= (self.perlin.threshold as f32 / 100.0) { 1.0 } else { 0.0 };
-                }
-                color_t += noise;
-            }
-
-            if self.white_noise.enabled {
-                let mut noise = noise::white_noise(x, y, self.white_noise.scale, self.white_noise.seed);
-                if self.white_noise.use_threshold {
-                    noise = if noise >= (self.white_noise.threshold as f32 / 100.0) { 1.0 } else { 0.0 };
-                }
-                color_t += noise.mul_add(2.0, -1.0);
-            }
-
-            if self.rect.enabled && self.rect.tile.enabled && self.rect.tile.variation > 0 {
+            let mut color_t = if self.noise_mode == NoiseMode::Color { noise_val } else { 0.0 };
+            if self.rect.enabled && self.rect.tile.enabled && self.rect.tile.variation_enabled {
                 let std = ((self.rect.tile.variation as f32) / 100.0).saturate();
                 color_t += std * gaussian(tile_x, tile_y, 1, self.rect.tile.variation_seed);
             }
 
             color_t = color_t.mul_add(0.5, 0.5).saturate();
 
-            self.color2.color().to_linear().lerp(self.color.color().to_linear(), color_t)
+            let mut col = self.color2.color().to_linear().lerp(self.color.color().to_linear(), color_t);
+            col.w = self.color.color().to_linear().w;
+            col
         } else {
             self.color.color().to_linear()
         };
+
+        if self.noise_mode == NoiseMode::Alpha {
+            src.w *= noise_val.mul_add(0.5, 0.5).saturate();
+        }
 
         let mut bevel_dist = if self.rect.bevel.enabled {
             let from_boundary = Vec4::new(gen_x as f32 + 0.5, gen_y as f32 + 0.5, (self.rect.width - gen_x) as f32 - 0.5, (self.rect.height - gen_y) as f32 - 0.5);
@@ -418,6 +433,7 @@ impl Default for TexturePass {
             blend_mode: BlendMode::Alpha,
             perlin: Default::default(),
             white_noise: Default::default(),
+            noise_mode: Default::default(),
             rect: RectSettings::default(),
         }
     }
