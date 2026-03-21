@@ -171,7 +171,6 @@ pub struct RectSettings {
     pub height: i32,
     pub round: RoundOptions,
     pub bevel: BevelOptions,
-    pub tile: TileOptions,
 }
 
 impl Default for RectSettings {
@@ -182,7 +181,6 @@ impl Default for RectSettings {
             height: IMG_SIZE / 2,
             round: RoundOptions::default(),
             bevel: BevelOptions::default(),
-            tile: TileOptions::default(),
         }
     }
 }
@@ -216,8 +214,8 @@ pub enum TileShiftDirection { Horizontal, Vertical }
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct TileOptions {
     pub enabled: bool,
-    pub x_offset: i32,
-    pub y_offset: i32,
+    pub x_gap: i32,
+    pub y_gap: i32,
     pub x_count: i32,
     pub y_count: i32,
     pub shift: i32,
@@ -231,14 +229,14 @@ impl Default for TileOptions {
     fn default() -> Self {
         Self {
             enabled: false,
-            x_offset: 32,
-            y_offset: 32,
+            x_gap: 4,
+            y_gap: 4,
             x_count: 3,
             y_count: 3,
             shift: 0,
             shift_direction: TileShiftDirection::Horizontal,
             variation_enabled: false,
-            variation: 0,
+            variation: 30,
             variation_seed: 0,
         }
     }
@@ -258,6 +256,7 @@ pub struct TexturePass {
     pub feature_x: i32,
     pub feature_y: i32,
     pub rect: RectSettings,
+    pub tile: TileOptions,
 }
 
 impl TexturePass {
@@ -290,7 +289,11 @@ impl TexturePass {
     pub fn uses_both_colors(&self) -> bool {
            (self.perlin.enabled  && self.noise_mode == NoiseMode::Color)
         || (self.white_noise.enabled && self.noise_mode == NoiseMode::Color)
-        || (self.rect.enabled && self.rect.tile.enabled && self.rect.tile.variation_enabled)
+        || (self.can_use_tilinging() && self.tile.enabled && self.tile.variation_enabled)
+    }
+
+    pub fn can_use_tilinging(&self) -> bool {
+        self.rect.enabled
     }
     
     fn apply(&self, dest: &mut Vec3, dest_d: &mut f32, x: i32, y: i32) {
@@ -303,24 +306,28 @@ impl TexturePass {
             gen_x -= self.feature_x;
             gen_y -= self.feature_y;
 
-            if !self.rect.tile.enabled {
+            if !self.tile.enabled {
                 if gen_x < 0 || gen_y < 0 {
                     return;
                 }
             } else {
-                match self.rect.tile.shift_direction {
-                    TileShiftDirection::Horizontal => gen_x -= (gen_y / self.rect.tile.y_offset) * self.rect.tile.shift,
-                    TileShiftDirection::Vertical => gen_y -= (gen_x / self.rect.tile.x_offset) * self.rect.tile.shift,
+                match self.tile.shift_direction {
+                    TileShiftDirection::Horizontal => gen_x -= (gen_y / self.tile.y_gap) * self.tile.shift,
+                    TileShiftDirection::Vertical => gen_y -= (gen_x / self.tile.x_gap) * self.tile.shift,
                 }
 
-                if gen_x < 0 || gen_y < 0 || gen_x >= self.rect.tile.x_offset * self.rect.tile.x_count || gen_y >= self.rect.tile.y_offset * self.rect.tile.y_count {
+                let tile_width = self.rect.width + self.tile.x_gap;
+                let tile_height = self.rect.height + self.tile.y_gap;
+
+
+                if gen_x < 0 || gen_y < 0 || gen_x >= tile_width * self.tile.x_count || gen_y >= tile_height * self.tile.y_count {
                     return;
                 }
 
-                tile_x = gen_x / self.rect.tile.x_offset;
-                gen_x %= self.rect.tile.x_offset;
-                tile_y = gen_y / self.rect.tile.y_offset;
-                gen_y %= self.rect.tile.y_offset;
+                tile_x = gen_x / tile_width;
+                gen_x %= tile_width;
+                tile_y = gen_y / tile_height;
+                gen_y %= tile_height;
             }
 
             if gen_x >= self.rect.width || gen_y >= self.rect.height {
@@ -350,9 +357,9 @@ impl TexturePass {
 
         let mut src = if self.uses_both_colors() {
             let mut color_t = if self.noise_mode == NoiseMode::Color { noise_val } else { 0.0 };
-            if self.rect.enabled && self.rect.tile.enabled && self.rect.tile.variation_enabled {
-                let std = ((self.rect.tile.variation as f32) / 100.0).saturate();
-                color_t += std * gaussian(tile_x, tile_y, 1, self.rect.tile.variation_seed);
+            if self.rect.enabled && self.tile.enabled && self.tile.variation_enabled {
+                let std = ((self.tile.variation as f32) / 100.0).saturate();
+                color_t += std * gaussian(tile_x, tile_y, 1, self.tile.variation_seed);
             }
 
             color_t = color_t.mul_add(0.5, 0.5).saturate();
@@ -435,6 +442,7 @@ impl Default for TexturePass {
             white_noise: Default::default(),
             noise_mode: Default::default(),
             rect: RectSettings::default(),
+            tile: TileOptions::default(),
         }
     }
 }
@@ -486,6 +494,7 @@ impl TextureDefinition {
                         ..Default::default()
                     },
                     white_noise: Default::default(),
+                    noise_mode: NoiseMode::Alpha,
                     ..Default::default()
                 },
                 TexturePass {

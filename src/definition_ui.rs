@@ -336,29 +336,29 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                     });
 
                     ui.horizontal_wrapped(| ui | {
-                        ui.checkbox(&mut pass.rect.tile.enabled, "Tile");
-                        if pass.rect.tile.enabled {
-                            ui.label("Offset:");
-                            ui.add(egui::DragValue::new(&mut pass.rect.tile.x_offset).range(2..=IMG_SIZE));
-                            ui.add(egui::DragValue::new(&mut pass.rect.tile.y_offset).range(2..=IMG_SIZE));
+                        ui.checkbox(&mut pass.tile.enabled, "Tile");
+                        if pass.tile.enabled {
+                            ui.label("Gap:");
+                            ui.add(egui::DragValue::new(&mut pass.tile.x_gap).range(2..=IMG_SIZE));
+                            ui.add(egui::DragValue::new(&mut pass.tile.y_gap).range(2..=IMG_SIZE));
                             ui.label("Count:");
-                            ui.add(egui::DragValue::new(&mut pass.rect.tile.x_count).range(1..=IMG_SIZE/2));
-                            ui.add(egui::DragValue::new(&mut pass.rect.tile.y_count).range(1..=IMG_SIZE/2));
+                            ui.add(egui::DragValue::new(&mut pass.tile.x_count).range(1..=IMG_SIZE/2));
+                            ui.add(egui::DragValue::new(&mut pass.tile.y_count).range(1..=IMG_SIZE/2));
                             ui.label("Shift:");
-                            ui.add(egui::DragValue::new(&mut pass.rect.tile.shift).range(-IMG_SIZE/2..=IMG_SIZE/2));
-                            if pass.rect.tile.shift > 0 {
+                            ui.add(egui::DragValue::new(&mut pass.tile.shift).range(-IMG_SIZE/2..=IMG_SIZE/2));
+                            if pass.tile.shift > 0 {
                                 ui.label("Direction:");
-                                add_enum_dropdown(ui, &mut pass.rect.tile.shift_direction, "tile_shift_direction", pass_idx, false);
+                                add_enum_dropdown(ui, &mut pass.tile.shift_direction, "tile_shift_direction", pass_idx, false);
                             }
                         }
                     });
-                    if pass.rect.tile.enabled {
+                    if pass.tile.enabled {
                         ui.horizontal_wrapped(| ui | {
-                            ui.checkbox(&mut pass.rect.tile.variation_enabled, "Variation");
-                            if pass.rect.tile.variation_enabled {
+                            ui.checkbox(&mut pass.tile.variation_enabled, "Variation");
+                            if pass.tile.variation_enabled {
                                 ui.label("Strength:");
-                                ui.add(egui::DragValue::new(&mut pass.rect.tile.variation).range(1..=400));
-                                reseed_button(ui, &mut pass.rect.tile.variation_seed);
+                                ui.add(egui::DragValue::new(&mut pass.tile.variation).range(1..=400));
+                                reseed_button(ui, &mut pass.tile.variation_seed);
                             }
                         });
                     };
