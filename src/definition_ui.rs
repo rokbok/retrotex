@@ -180,139 +180,14 @@ pub fn definition_ui(def: &mut TextureDefinition, tmp_str: &mut String, ui: &mut
                 ui.horizontal_wrapped(| ui | {
                     ui.checkbox(&mut pass.rect.enabled, "Rect");
                     if pass.rect.enabled {
-                                                let wh = pass.rect.width / 2;
-                        let hh = pass.rect.height / 2;
-                        ui.label("Center X:");
-                        let mut cx = pass.feature_x + wh;
-                        if ui.add(egui::DragValue::new(&mut cx).range((-pass.rect.width + 1 + wh)..=(IMG_SIZE - 1 + wh))).changed() {
-                            pass.feature_x = cx - wh;
-                        }
-                        ui.label("Center Y:");
-                        let mut cy = pass.feature_y + hh;
-                        if ui.add(egui::DragValue::new(&mut cy).range((-pass.rect.height + 1 + hh)..=(IMG_SIZE - 1 + hh))).changed() {
-                            pass.feature_y = cy - hh;
-                        }
-                        ui.label("Width:");
-                        let old_width = pass.rect.width;
-                        if ui.add(egui::DragValue::new(&mut pass.rect.width).range(1..=(2 * IMG_SIZE - 1))).changed() {
-                            let delta = pass.rect.width - old_width;
-    
-                            if delta % 2 == 0 {
-                                pass.feature_x -= delta / 2;
-                            } else {
-                                let old_center = 2 * pass.feature_x + old_width;
-                                let bias = match old_center.rem_euclid(4) {
-                                    0 | 1 => -1,
-                                    2 | 3 => 1,
-                                    _ => unreachable!(),
-                                };
-                                pass.feature_x += (-delta + bias) / 2;
-                            }
-                        }
-                        ui.label("Height:");
-                        let old_height = pass.rect.height;
-                        if ui.add(egui::DragValue::new(&mut pass.rect.height).range(1..=(2 * IMG_SIZE - 1))).changed() {
-                            let delta = pass.rect.height - old_height;
-                            if delta % 2 == 0 {
-                                pass.feature_y -= delta / 2;
-                            } else {
-                                let old_center = 2 * pass.feature_y + old_height;
-                                let bias = match old_center.rem_euclid(4) {
-                                    0 | 1 => -1,
-                                    2 | 3 => 1,
-                                    _ => unreachable!(),
-                                };
-                                pass.feature_y += (-delta + bias) / 2;
-                            }
-                        }
+                        ui.add(egui::DragValue::new(&mut pass.feature_x).range(-IMG_SIZE..=(IMG_SIZE - 1)).prefix("X:"));
+                        ui.add(egui::DragValue::new(&mut pass.feature_y).range(-IMG_SIZE..=(IMG_SIZE - 1)).prefix("Y:"));
+                        ui.add(egui::DragValue::new(&mut pass.rect.width).range(1..=(2 * IMG_SIZE - 1)).prefix("W:"));
+                        ui.add(egui::DragValue::new(&mut pass.rect.height).range(1..=(2 * IMG_SIZE - 1)).prefix("H:"));
                     }
                 });
 
-                if pass.rect.enabled {
-                    ui.horizontal_wrapped(| ui | {
-                        let mut l = pass.feature_x;
-                        ui.label("Left:");
-                        if ui.add(egui::DragValue::new(&mut l).range((-IMG_SIZE + 1)..=(pass.feature_x + pass.rect.width - 1))).changed() {
-                            pass.rect.width += pass.feature_x - l;
-                            pass.feature_x = l;
-                        }
-                        let mut t = pass.feature_y;
-                        ui.label("Top:");
-                        if ui.add(egui::DragValue::new(&mut t).range((-IMG_SIZE + 1)..=(pass.feature_y + pass.rect.height - 1))).changed() {
-                            pass.rect.height += pass.feature_y - t;
-                            pass.feature_y = t;
-                        }
-                        let mut r = pass.feature_x + pass.rect.width;
-                        ui.label("Right:");
-                        if ui.add(egui::DragValue::new(&mut r).range((pass.feature_x + 1)..=(2 * IMG_SIZE - 1))).changed() {
-                            pass.rect.width = r - pass.feature_x;
-                        }
-                        let mut b = pass.feature_y + pass.rect.height;
-                        ui.label("Bottom:");
-                        if ui.add(egui::DragValue::new(&mut b).range((pass.feature_y + 1)..=(2 * IMG_SIZE - 1))).changed() {
-                            pass.rect.height = b - pass.feature_y;
-                        }
-                    });
-
-                    ui.horizontal_wrapped(| ui | {
-                        ui.label("Ratio:");
-                        if ui.button("Square").clicked() {
-                            pass.rect.height = pass.rect.width;
-                        }
-                        if ui.button("Golden").clicked() {
-                            let ratio = (1.0 + 5.0_f32.sqrt()) / 2.0;
-                            pass.rect.height = ((pass.rect.width as f32 / ratio).round() as i32).min(IMG_SIZE);
-                        }
-                        if ui.button("SQRT2").clicked() {
-                            let ratio = 2.0_f32.sqrt();
-                            pass.rect.height = ((pass.rect.width as f32 / ratio).round() as i32).min(IMG_SIZE);
-                        }
-                        if ui.button("16:9").clicked() {
-                            let ratio = 16.0 / 9.0;
-                            pass.rect.height = ((pass.rect.width as f32 / ratio).round() as i32).min(IMG_SIZE);
-                        }
-                        if ui.button("Flip").clicked() {
-                            let mv = (pass.rect.width - pass.rect.height) / 2;
-                            pass.feature_x += mv;
-                            pass.feature_y -= mv;
-                            swap(&mut pass.rect.width, &mut pass.rect.height);
-                        }
-                        if ui.button("Clip").clicked() {
-                            pass.feature_x = pass.feature_x.max(0);
-                            pass.feature_y = pass.feature_y.max(0);
-                            pass.rect.width = pass.rect.width.min(IMG_SIZE - pass.feature_x);
-                            pass.rect.height = pass.rect.height.min(IMG_SIZE - pass.feature_y);
-                        }
-                        if ui.button("Full").clicked() {
-                            pass.feature_x = 0;
-                            pass.feature_y = 0;
-                            pass.rect.width = IMG_SIZE;
-                            pass.rect.height = IMG_SIZE;
-                        }
-                    });
-
-                    ui.horizontal_wrapped(| ui | {
-                        ui.label("Align:");
-                        if ui.button("Left").on_hover_text("Align to the left").clicked() {
-                            pass.feature_x = 0;
-                        }
-                        if ui.button("HCenter").on_hover_text("Center horizontally").clicked() {
-                            pass.feature_x = (IMG_SIZE - pass.rect.width) / 2;
-                        }
-                        if ui.button("Right").on_hover_text("Align to the right").clicked() {
-                            pass.feature_x = IMG_SIZE - pass.rect.width;
-                        }
-                        if ui.button("Top").on_hover_text("Align to the top").clicked() {
-                            pass.feature_y = 0;
-                        }
-                        if ui.button("VCenter").on_hover_text("Center vertically").clicked() {
-                            pass.feature_y = (IMG_SIZE - pass.rect.height) / 2;
-                        }
-                        if ui.button("Bottom").on_hover_text("Align to the bottom").clicked() {
-                            pass.feature_y = IMG_SIZE - pass.rect.height;
-                        }
-                    });
-                    
+                if pass.rect.enabled {                    
                     ui.horizontal_wrapped(| ui | {
                         ui.checkbox(&mut pass.rect.round.enabled, "Round").on_hover_text("Round rect corners");
                         if pass.rect.round.enabled {
