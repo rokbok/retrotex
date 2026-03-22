@@ -301,6 +301,10 @@ impl TexturePass {
         let mut gen_y = y;
         let mut tile_x = 0;
         let mut tile_y = 0;
+
+        if x  == 10 && y == 10 {
+            info!("HERE");
+        }
         
         if self.rect.enabled {
             gen_x -= self.feature_x;
@@ -342,7 +346,7 @@ impl TexturePass {
             let seed = (self.perlin.seed ^ (tile_x as u32).wrapping_mul(0x1f1f1f1f) ^ (tile_y as u32).wrapping_mul(0x1e1e1e1e)) & PerlinSettings::SEED_MASK;
             let mut noise = noise::fbm2(noise_scale * x as f32, noise_scale * y as f32, self.perlin.octaves.max(1) as u32, 2.0, 0.5, seed as f32);
             if self.perlin.use_threshold {
-                noise = if noise >= (self.perlin.threshold as f32 / 100.0).mul_add(2.0, -1.0) { 1.0 } else { 0.0 };
+                noise = if noise >= (self.perlin.threshold as f32 / 100.0).mul_add(2.0, -1.0) { 1.0 } else { -1.0 };
             }
             noise_val += noise;
         }
@@ -382,7 +386,7 @@ impl TexturePass {
             0.0
         };
 
-        if self.rect.round.enabled {
+        if self.rect.enabled && self.rect.round.enabled {
             let rad = self.rect.round.radius as f32;
             let half_size = Vec2::new(0.5 * self.rect.width as f32, 0.5 * self.rect.height as f32);
             let rel = Vec2::new(gen_x as f32, gen_y as f32) + 0.5 - half_size;
@@ -403,7 +407,7 @@ impl TexturePass {
             }
         }
 
-        if self.rect.bevel.enabled  {
+        if self.rect.enabled && self.rect.bevel.enabled  {
             let bdepth_abs = if self.rect.bevel.steepness > 0 {
                 (self.rect.bevel.size * self.rect.bevel.steepness) as f32
             } else if self.rect.bevel.steepness < 0 {
