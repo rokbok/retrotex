@@ -96,7 +96,7 @@ struct GrabCandidate {
 }
 
 impl GrabCandidate {
-    const GRAB_TOLERANCE: f32 = 10.0;
+    const GRAB_TOLERANCE: f32 = 6.0;
 
     fn new() -> Self {
         Self { target: None, distance: f32::MAX }
@@ -122,6 +122,37 @@ impl GrabCandidate {
         match self.target {
             Some(t) => t == target_type,
             None => false,
+        }
+    }
+
+    fn adjust_edges_for_round(&mut self, hp: egui::Pos2, round_sz: f32, edit_rect: egui::Rect){
+        // Special case the edges in the rounded part -- being able to grab them here feels wrong, so we re-direct to the corner instead
+        match self.target {
+            Some(DragTarget::Edge(0)) =>
+                if hp.y < edit_rect.top() + round_sz - GrabCandidate::GRAB_TOLERANCE {
+                    self.target = Some(DragTarget::CornerHandle(0));
+                } else if hp.y > edit_rect.bottom() - round_sz + GrabCandidate::GRAB_TOLERANCE {
+                    self.target = Some(DragTarget::CornerHandle(2));
+                },
+            Some(DragTarget::Edge(1)) =>
+                if hp.y < edit_rect.top() + round_sz - GrabCandidate::GRAB_TOLERANCE {
+                    self.target = Some(DragTarget::CornerHandle(1));
+                } else if hp.y > edit_rect.bottom() - round_sz + GrabCandidate::GRAB_TOLERANCE {
+                    self.target = Some(DragTarget::CornerHandle(3));
+                },
+            Some(DragTarget::Edge(2)) =>
+                if hp.x < edit_rect.left() + round_sz - GrabCandidate::GRAB_TOLERANCE {
+                    self.target = Some(DragTarget::CornerHandle(0));
+                } else if hp.x > edit_rect.right() - round_sz + GrabCandidate::GRAB_TOLERANCE {
+                    self.target = Some(DragTarget::CornerHandle(1));
+                },
+            Some(DragTarget::Edge(3)) =>
+                if hp.x < edit_rect.left() + round_sz - GrabCandidate::GRAB_TOLERANCE {
+                    self.target = Some(DragTarget::CornerHandle(2));
+                } else if hp.x > edit_rect.right() - round_sz + GrabCandidate::GRAB_TOLERANCE {
+                    self.target = Some(DragTarget::CornerHandle(3));
+                },
+            _ => {},
         }
     }
 }
@@ -167,9 +198,19 @@ impl RetroTexApp {
                 img.paint_at(ui, image_rect);
 
                 if self.def.passes.len() > 0 && self.def.passes[0].rect.enabled {
-                    // Calculate gizmo positions
                     let pass = &mut self.def.passes[0];
-                    let painter  = ui.painter();
+
+                    // Drag update
+                    if let Some(drag) = &self.drag {
+                        // Update ongoing drag
+                        if drag_response.dragged_by(egui::PointerButton::Primary) {
+                            if let Some(hp) = drag_response.interact_pointer_pos() {
+                                drag.target.update_pass(pass, hp, drag, image_scale);
+                            }
+                        }
+                    }
+
+                    // Calculate gizmo positions
                     let edit_rect = calculate_screen_rect(pass.feature_x, pass.feature_y, pass.rect.width, pass.rect.height, image_rect, image_scale);
                     let round_sz = if pass.rect.round.enabled { pass.rect.round.radius as f32 * image_scale as f32 } else { 0.0 };
                     
@@ -191,12 +232,6 @@ impl RetroTexApp {
 
                     // Check grab target
                     let drag_target = if let Some(drag) = &self.drag {
-                        // Update ongoing drag
-                        if drag_response.dragged_by(egui::PointerButton::Primary) {
-                            if let Some(hp) = drag_response.interact_pointer_pos() {
-                                drag.target.update_pass(pass, hp, drag, image_scale);
-                            }
-                        }
                         Some(drag.target)
                     } else if let Some(hp) = drag_response.hover_pos() {
                         // Check what to hover / start grabing 
@@ -213,9 +248,12 @@ impl RetroTexApp {
                         for (i, handle) in handles.iter().enumerate() {
                             grab_target.update_grab_target(DragTarget::CornerHandle(i), handle.distance_to_pos(hp));
                         }
+
                         if let Some(round_center) = round_handle_center {
                             grab_target.update_grab_target(DragTarget::RoundHandle, (round_center - hp).length() - round_handle_rad);
                         }
+
+                        grab_target.adjust_edges_for_round(hp, round_sz, edit_rect);
                         
                         if let Some(target) = grab_target.target {
                             if drag_response.drag_started_by(egui::PointerButton::Primary) {
@@ -230,12 +268,13 @@ impl RetroTexApp {
 
                     // Draw gizmos
                     let color = Color32::GREEN;
-                    let active_color = Color32::YELLOW;
+                    let active_color = Color32::WHITE;
                     let line_stroke = Stroke::new(line_width, color);
                     let active_line_stroke = Stroke::new(2.0 * line_width, active_color);
                     let handle_color = Color32::BLACK;
-                    let active_handle_color = Color32::YELLOW;
+                    let active_handle_color = Color32::WHITE;
 
+                    let painter  = ui.painter();
                     painter.rect_stroke(edit_rect, round_sz, choose(drag_target, DragTarget::Rect, line_stroke, active_line_stroke), egui::StrokeKind::Outside);
                     if let Some(DragTarget::Edge(edge_index)) = drag_target {
                         let lwh = 0.5 * line_width;
