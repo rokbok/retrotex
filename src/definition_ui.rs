@@ -1,4 +1,4 @@
-use std::{fmt::Write, mem::swap};
+use std::{fmt::Write};
 
 use egui::{Button, TextEdit, text::{CCursor, CCursorRange}};
 use crate::{IMG_SIZE, color::{Color, EditableColor}, definition::{TextureDefinition, TexturePass}, util::add_enum_dropdown};

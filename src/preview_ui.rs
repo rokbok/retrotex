@@ -8,18 +8,28 @@ use crate::{DisplayMode, IMG_SIZE, RetroTexApp, definition::TexturePass, idx, ut
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
 
+#[allow(unused)]
+fn with_alpha(alpha: f32, mut stroke: egui::Stroke) -> egui::Stroke {
+    let [r, g, b, _] = stroke.color.to_srgba_unmultiplied();
+    stroke.color = egui::Color32::from_rgba_unmultiplied(r, g, b, (alpha * 255.0).round().clamp(0.0, 255.0) as u8);
+    stroke
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum DragTarget {
     Rect,
     Edge(usize),
     CornerHandle(usize),
     RoundHandle,
+    Tile(usize),
 }
 
 impl DragTarget {
     fn start_values(&self, pass: &TexturePass) -> (i32, i32, i32, i32) {
         match self {
             DragTarget::RoundHandle => (pass.rect.round.radius, 0, 0, 0),
+            DragTarget::Tile(0) => (pass.tile.x_gap, 0, 0, 0),
+            DragTarget::Tile(1) => (pass.tile.y_gap, 0, 0, 0),
             _ => (pass.feature_x, pass.feature_y, pass.rect.width, pass.rect.height),
         }
     }
@@ -69,6 +79,12 @@ impl DragTarget {
             },
             DragTarget::RoundHandle => {
                 pass.rect.round.radius = (drag.value_start.0 - dy).clamp(0, pass.rect.width.min(pass.rect.height) / 2);
+            },
+            DragTarget::Tile(0) => {
+                pass.tile.x_gap = (drag.value_start.0 + dx).max(0);
+            },
+            DragTarget::Tile(1) => {
+                pass.tile.y_gap = (drag.value_start.0 + dy).max(0);
             },
             _ => unreachable!(),
         }
@@ -230,11 +246,24 @@ impl RetroTexApp {
                     let round_handle_rad = corner_handle_size / 2.0;
                     let line_width: f32 = 2.0;
 
+                    let htile_rect = if pass.tile.enabled && pass.tile.x_count > 1 {
+                        let offset = egui::Vec2::new(((pass.rect.width + pass.tile.x_gap) * image_scale) as f32, 0.0);
+                        Some(egui::Rect::from_min_max(edit_rect.left_top() + offset, edit_rect.right_bottom() + offset))
+                    } else {
+                        None
+                    };
+
+                    let vtile_rect = if pass.tile.enabled && pass.tile.y_count > 1 {
+                        let offset = egui::Vec2::new(0.0, ((pass.rect.height + pass.tile.y_gap) * image_scale) as f32);
+                        Some(egui::Rect::from_min_max(edit_rect.left_top() + offset, edit_rect.right_bottom() + offset))
+                    } else {
+                        None
+                    };
+
                     // Check grab target
                     let drag_target = if let Some(drag) = &self.drag {
                         Some(drag.target)
                     } else if let Some(hp) = drag_response.hover_pos() {
-                        // Check what to hover / start grabing 
                         let mut grab_target = GrabCandidate::new();
                         grab_target.update_grab_target(DragTarget::Rect, edit_rect.distance_to_pos(hp).max(GrabCandidate::GRAB_TOLERANCE));
                         if grab_target.is(DragTarget::Rect) { // Check edges
@@ -251,6 +280,13 @@ impl RetroTexApp {
 
                         if let Some(round_center) = round_handle_center {
                             grab_target.update_grab_target(DragTarget::RoundHandle, (round_center - hp).length() - round_handle_rad);
+                        }
+
+                        if let Some(htr) = htile_rect {
+                            grab_target.update_grab_target(DragTarget::Tile(0), htr.distance_to_pos(hp));
+                        }
+                        if let Some(vtr) = vtile_rect {
+                            grab_target.update_grab_target(DragTarget::Tile(1), vtr.distance_to_pos(hp));
                         }
 
                         grab_target.adjust_edges_for_round(hp, round_sz, edit_rect);
@@ -273,8 +309,20 @@ impl RetroTexApp {
                     let active_line_stroke = Stroke::new(2.0 * line_width, active_color);
                     let handle_color = Color32::BLACK;
                     let active_handle_color = Color32::WHITE;
+                    let tile_color = Color32::from_rgba_unmultiplied(0, 255, 255, 85);
+                    let tile_stroke = Stroke::new(line_width, tile_color);
 
                     let painter  = ui.painter();
+
+                    if let Some(htr) = htile_rect {
+                         painter.rect_stroke(htr, round_sz,
+                            choose(drag_target, DragTarget::Tile(0), tile_stroke, active_line_stroke), egui::StrokeKind::Outside);
+                    }
+                    if let Some(vtr) = vtile_rect {
+                         painter.rect_stroke(vtr, round_sz,
+                            choose(drag_target, DragTarget::Tile(1), tile_stroke, active_line_stroke), egui::StrokeKind::Outside);
+                    }
+
                     painter.rect_stroke(edit_rect, round_sz, choose(drag_target, DragTarget::Rect, line_stroke, active_line_stroke), egui::StrokeKind::Outside);
                     if let Some(DragTarget::Edge(edge_index)) = drag_target {
                         let lwh = 0.5 * line_width;
