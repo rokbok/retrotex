@@ -79,6 +79,7 @@ struct RetroTexApp {
     output_dir: String,
     initial_generation_done: bool,
     drag: Option<OngoingDrag>,
+    preview_editing: Option<usize>,
 }
 
 impl RetroTexApp {
@@ -97,6 +98,7 @@ impl RetroTexApp {
             output_dir,
             initial_generation_done: false,
             drag: None,
+            preview_editing: None,
         };
 
         ret
@@ -216,7 +218,7 @@ impl eframe::App for RetroTexApp {
         egui::SidePanel::right("right_panel")
             .default_width(400.0)
             .show(ctx, |ui| {
-                definition_ui::definition_ui(&mut self.def, &mut self.tmp_str, ui);
+                self.definition_ui(ui);
             });
         
         egui::CentralPanel::default().show(ctx, |ui| {

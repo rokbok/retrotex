@@ -2,7 +2,7 @@ use std::{fmt::Display, hash::Hash};
 
 use glam::{FloatExt, IVec3, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
-use strum_macros::{AsRefStr, EnumString, VariantNames};
+use strum_macros::{AsRefStr, EnumCount, EnumIter, EnumString, VariantNames};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
@@ -13,6 +13,23 @@ pub const DEFAULT_NAME: &str = "unnamed";
 
 #[allow(dead_code)]
 const SQRT2HALF: f32 = 0.70710678118654752440084436210485;
+
+
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize, AsRefStr, EnumString, VariantNames, Default, EnumIter, EnumCount)]
+pub enum Coverage {
+    #[default] Full,
+    Rectangle,
+    Pattern
+}
+
+impl Coverage {
+    pub fn is_gizmo_editable(&self) -> bool {
+        match &self {
+            Coverage::Rectangle => true,
+            _ => false,
+        }
+    }
+}
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize, AsRefStr, EnumString, VariantNames)]
 pub enum BlendMode {
@@ -166,7 +183,6 @@ pub struct BevelOptions {
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 #[serde(default)]
 pub struct RectSettings {
-    pub enabled: bool,
     pub width: i32,
     pub height: i32,
     pub round: RoundOptions,
@@ -176,7 +192,6 @@ pub struct RectSettings {
 impl Default for RectSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
             width: IMG_SIZE / 2,
             height: IMG_SIZE / 2,
             round: RoundOptions::default(),
@@ -246,6 +261,7 @@ impl Default for TileOptions {
 #[serde(default)]
 pub struct TexturePass {
     pub name: Option<String>,
+    pub coverage: Coverage,
     pub enabled: bool,
     pub color: EditableColor<true>,
     pub color2: EditableColor<false>,
@@ -292,8 +308,15 @@ impl TexturePass {
         || (self.can_use_tilinging() && self.tile.enabled && self.tile.variation_enabled)
     }
 
+    pub fn is_rect(&self) -> bool {
+        self.coverage == Coverage::Rectangle
+    }
+
     pub fn can_use_tilinging(&self) -> bool {
-        self.rect.enabled
+        match self.coverage {
+            Coverage::Rectangle | Coverage::Pattern => true,
+            _ => false,
+        }
     }
     
     fn apply(&self, dest: &mut Vec3, dest_d: &mut f32, x: i32, y: i32) {
@@ -301,12 +324,8 @@ impl TexturePass {
         let mut gen_y = y;
         let mut tile_x = 0;
         let mut tile_y = 0;
-
-        if x  == 10 && y == 10 {
-            info!("HERE");
-        }
         
-        if self.rect.enabled {
+        if self.is_rect() {
             gen_x -= self.feature_x;
             gen_y -= self.feature_y;
 
@@ -361,7 +380,7 @@ impl TexturePass {
 
         let mut src = if self.uses_both_colors() {
             let mut color_t = if self.noise_mode == NoiseMode::Color { noise_val } else { 0.0 };
-            if self.rect.enabled && self.tile.enabled && self.tile.variation_enabled {
+            if self.is_rect() && self.tile.enabled && self.tile.variation_enabled {
                 let std = ((self.tile.variation as f32) / 100.0).saturate();
                 color_t += std * gaussian(tile_x, tile_y, 1, self.tile.variation_seed);
             }
@@ -386,7 +405,7 @@ impl TexturePass {
             0.0
         };
 
-        if self.rect.enabled && self.rect.round.enabled {
+        if self.is_rect() && self.rect.round.enabled {
             let rad = self.rect.round.radius as f32;
             let half_size = Vec2::new(0.5 * self.rect.width as f32, 0.5 * self.rect.height as f32);
             let rel = Vec2::new(gen_x as f32, gen_y as f32) + 0.5 - half_size;
@@ -407,7 +426,7 @@ impl TexturePass {
             }
         }
 
-        if self.rect.enabled && self.rect.bevel.enabled  {
+        if self.is_rect() && self.rect.bevel.enabled  {
             let bdepth_abs = if self.rect.bevel.steepness > 0 {
                 (self.rect.bevel.size * self.rect.bevel.steepness) as f32
             } else if self.rect.bevel.steepness < 0 {
@@ -438,7 +457,7 @@ impl Default for TexturePass {
             enabled: true,
             color: Color::from_hex("#f48a71").unwrap().into(),
             color2: Color::from_hex("#71c8f4").unwrap().into(),
-
+            coverage: Coverage::default(),
             feature_x: IMG_SIZE / 4,
             feature_y: IMG_SIZE / 4,
             blend_mode: BlendMode::Alpha,
@@ -506,8 +525,8 @@ impl TextureDefinition {
                     color: Color::from_hex("#00000022").unwrap().into(),
                     feature_x: 37,
                     feature_y: 25,
+                    coverage: Coverage::Rectangle,
                     rect: RectSettings {
-                        enabled: true,
                         width: 53,
                         height: 98,
                         round: RoundOptions {
@@ -531,8 +550,8 @@ impl TextureDefinition {
                     color: Color::from_hex("#00000000").unwrap().into(),
                     feature_x: 79,
                     feature_y: 70,
+                    coverage: Coverage::Rectangle,
                     rect: RectSettings {
-                        enabled: true,
                         width: 6,
                         height: 6,
                         round: RoundOptions {
@@ -556,8 +575,8 @@ impl TextureDefinition {
                     color: Color::from_hex("#304A4FFF").unwrap().into(),
                     feature_x: 51,
                     feature_y: 36,
+                    coverage: Coverage::Rectangle,
                     rect: RectSettings {
-                        enabled: true,
                         width: 26,
                         height: 17,
                         bevel: BevelOptions {
