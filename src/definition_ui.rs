@@ -1,6 +1,6 @@
 use std::{fmt::Write as _};
 
-use egui::{Button, TextEdit, text::{CCursor, CCursorRange}};
+use egui::{Button, TextEdit, Vec2, text::{CCursor, CCursorRange}};
 use strum::{EnumCount, IntoEnumIterator};
 use crate::{IMG_SIZE, RetroTexApp, color::{Color, EditableColor}, definition::{NoiseType, TexturePass}, util::add_enum_dropdown};
 
