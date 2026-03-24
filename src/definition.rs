@@ -1,4 +1,4 @@
-use std::{fmt::Display, hash::Hash};
+use std::{fmt::{Debug, Display}, hash::Hash};
 
 use glam::{FloatExt, IVec3, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,47 @@ pub const DEFAULT_NAME: &str = "unnamed";
 #[allow(dead_code)]
 const SQRT2HALF: f32 = 0.70710678118654752440084436210485;
 
+#[derive(Clone, Copy, Hash, Default, Eq, PartialEq)]
+pub struct FloatAsInt<const F: i32> {
+    pub v: i32,
+}
+
+impl<const F: i32> From<FloatAsInt<F>> for f32 {
+    fn from(value: FloatAsInt<F>) -> Self {
+        value.v as f32 / F as f32
+    }
+}
+
+impl<const F: i32> From<f32> for FloatAsInt<F> {
+    fn from(value: f32) -> Self {
+        Self { v: (value * F as f32).round() as i32 }
+    }
+}
+
+impl<const F: i32> Serialize for FloatAsInt<F> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.v.serialize(serializer)
+    }
+}
+
+impl<'de, const F: i32> Deserialize<'de> for FloatAsInt<F> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let v = i32::deserialize(deserializer)?;
+        Ok(Self { v })
+    }
+}
+
+impl<const F: i32> Debug for FloatAsInt<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.2}", f32::from(*self))
+    }
+}
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize, AsRefStr, EnumString, VariantNames, Default, EnumIter, EnumCount)]
 pub enum Coverage {
@@ -104,61 +145,56 @@ impl Default for AOSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
-#[serde(default)]
-pub struct PerlinSettings {
-    pub enabled: bool,
-    pub scale: i32,
-    pub octaves: i32,
-    pub seed: u32,
-    pub use_threshold: bool,
-    pub threshold: i32,
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize, AsRefStr, EnumString, VariantNames, Default, EnumCount, EnumIter)]
+
+pub enum NoiseType {
+    #[default] None,
+    Perlin,
+    Gaussian,
+    White,
 }
 
-impl PerlinSettings {
-    pub const SEED_MASK: u32 = 0xff_ffff; // Avoid too large seeds to avoid floating point issues
-}
-
-impl Default for PerlinSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            scale: 10,
-            octaves: 4,
-            seed: 0,
-            use_threshold: false,
-            threshold: 50,
-        }
-    }
-}
-
-
-#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
-#[serde(default)]
-pub struct WhiteNoiseSettings {
-    pub enabled: bool,
-    pub scale: i32,
-    pub seed: u32,
-    pub use_threshold: bool,
-    pub threshold: i32,
-}
-
-impl Default for WhiteNoiseSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            scale: 1,
-            seed: 0,
-            use_threshold: false,
-            threshold: 50,
-        }
-    }
-}
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize, AsRefStr, EnumString, VariantNames, Default)]
 pub enum NoiseMode {
     #[default] Color,
     Alpha
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+#[serde(default)]
+pub struct NoiseSettings {
+    pub noise_type: NoiseType,
+    pub mode: NoiseMode,
+    pub pixel_scale: i32,
+    pub perlin_scale: FloatAsInt<500>,
+    pub perlin_octaves: i32,
+    pub perlin_strength: FloatAsInt<100>,
+    pub seed: u32,
+    pub std: FloatAsInt<400>,
+    pub use_threshold: bool,
+    pub threshold: FloatAsInt<100>,
+}
+
+impl NoiseSettings {
+    pub const PERLIN_SEED_MASK: u32 = 0xff_ffff; // Avoid too large seeds to avoid floating point issues
+}
+
+impl Default for NoiseSettings {
+    fn default() -> Self {
+        Self {
+            noise_type: NoiseType::None,
+            mode: NoiseMode::Color,
+            pixel_scale: 1,
+            perlin_scale: FloatAsInt::from(0.02),
+            perlin_octaves: 4,
+            perlin_strength: FloatAsInt::from(1.0),
+            seed: 0,
+            std: FloatAsInt::from(0.1),
+            use_threshold: false,
+            threshold: FloatAsInt::from(0.5),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
@@ -236,7 +272,7 @@ pub struct TileOptions {
     pub shift: i32,
     pub shift_direction: TileShiftDirection,
     pub variation_enabled: bool,
-    pub variation: i32,
+    pub variation: FloatAsInt<400>,
     pub variation_seed: u32,
 }
 
@@ -251,7 +287,7 @@ impl Default for TileOptions {
             shift: 0,
             shift_direction: TileShiftDirection::Horizontal,
             variation_enabled: false,
-            variation: 30,
+            variation: 0.05.into(),
             variation_seed: 0,
         }
     }
@@ -264,10 +300,7 @@ pub struct TexturePass {
     pub coverage: Coverage,
     pub enabled: bool,
     pub color: EditableColor<true>,
-    pub color2: EditableColor<false>,
-    pub perlin: PerlinSettings,
-    pub white_noise: WhiteNoiseSettings,
-    pub noise_mode: NoiseMode,
+    pub noise: NoiseSettings,
     pub blend_mode: BlendMode,
     pub feature_x: i32,
     pub feature_y: i32,
@@ -283,11 +316,7 @@ impl TexturePass {
         let b = rand::random_range(t + 20..=IMG_SIZE);
         Self {
             color: Color::random().into(),
-            perlin: PerlinSettings { 
-                seed: rand::random(),
-                ..Default::default()
-            },
-            white_noise: WhiteNoiseSettings { 
+            noise: NoiseSettings {
                 seed: rand::random(),
                 ..Default::default()
             },
@@ -301,21 +330,47 @@ impl TexturePass {
             ..Default::default()
         }
     }
-
-    pub fn uses_both_colors(&self) -> bool {
-           (self.perlin.enabled  && self.noise_mode == NoiseMode::Color)
-        || (self.white_noise.enabled && self.noise_mode == NoiseMode::Color)
-        || (self.can_use_tilinging() && self.tile.enabled && self.tile.variation_enabled)
-    }
-
+    
     pub fn is_rect(&self) -> bool {
         self.coverage == Coverage::Rectangle
+    }
+
+    pub fn uses_noise(&self) -> bool {
+        self.noise.noise_type != NoiseType::None
     }
 
     pub fn can_use_tilinging(&self) -> bool {
         match self.coverage {
             Coverage::Rectangle | Coverage::Pattern => true,
             _ => false,
+        }
+    }
+
+    fn noise(&self, x: i32, y: i32, seed: u32) -> f32 {
+        let noise_val = match self.noise.noise_type {
+            NoiseType::Perlin => {
+                let noise_scale= f32::from(self.noise.perlin_scale);
+                f32::from(self.noise.perlin_strength)
+                    * noise::fbm2(noise_scale * x as f32, noise_scale * y as f32, 
+                        self.noise.perlin_octaves.max(1) as u32, 2.0, 0.5,
+                        (seed & NoiseSettings::PERLIN_SEED_MASK) as f32) 
+            },
+            NoiseType::White => {
+                let uniform_std = (1.0f32 / 12.0).sqrt(); // Standard deviation of uniform distribution in [0, 1]
+                let fact = f32::from(self.noise.std) / uniform_std;
+                fact * noise::white_noise(x, y, self.noise.pixel_scale, seed).mul_add(2.0, -1.0)
+            },
+            NoiseType::Gaussian => {
+                let fact = f32::from(self.noise.std);
+                fact * gaussian(x, y, self.noise.pixel_scale, seed)
+            },
+            NoiseType::None => 0.0,
+        };
+
+        if self.noise.use_threshold {
+            if noise_val >= f32::from(self.noise.threshold).mul_add(2.0, -1.0) { 1.0 } else { -1.0 }
+        } else {
+            noise_val
         }
     }
     
@@ -334,15 +389,13 @@ impl TexturePass {
                     return;
                 }
             } else {
-                match self.tile.shift_direction {
-                    TileShiftDirection::Horizontal => gen_x -= (gen_y / self.tile.y_gap) * self.tile.shift,
-                    TileShiftDirection::Vertical => gen_y -= (gen_x / self.tile.x_gap) * self.tile.shift,
-                }
-
                 let tile_width = self.rect.width + self.tile.x_gap;
                 let tile_height = self.rect.height + self.tile.y_gap;
 
-
+                match self.tile.shift_direction {
+                    TileShiftDirection::Horizontal => gen_x -= (gen_y / tile_height) * self.tile.shift,
+                    TileShiftDirection::Vertical => gen_y -= (gen_x / tile_width) * self.tile.shift,
+                }
                 if gen_x < 0 || gen_y < 0 || gen_x >= tile_width * self.tile.x_count || gen_y >= tile_height * self.tile.y_count {
                     return;
                 }
@@ -358,45 +411,32 @@ impl TexturePass {
             }
         }
 
+        let mut src = self.color.color().to_linear();
+
         
-        let mut noise_val = 0.0;
-        if self.perlin.enabled {
-            let noise_scale = 0.002 * self.perlin.scale as f32;
-            let seed = (self.perlin.seed ^ (tile_x as u32).wrapping_mul(0x1f1f1f1f) ^ (tile_y as u32).wrapping_mul(0x1e1e1e1e)) & PerlinSettings::SEED_MASK;
-            let mut noise = noise::fbm2(noise_scale * x as f32, noise_scale * y as f32, self.perlin.octaves.max(1) as u32, 2.0, 0.5, seed as f32);
-            if self.perlin.use_threshold {
-                noise = if noise >= (self.perlin.threshold as f32 / 100.0).mul_add(2.0, -1.0) { 1.0 } else { -1.0 };
-            }
-            noise_val += noise;
-        }
-
-        if self.white_noise.enabled {
-            let mut noise = noise::white_noise(x, y, self.white_noise.scale, self.white_noise.seed);
-            if self.white_noise.use_threshold {
-                noise = if noise >= (self.white_noise.threshold as f32 / 100.0) { 1.0 } else { 0.0 };
-            }
-            noise_val += noise.mul_add(2.0, -1.0);
-        }
-
-        let mut src = if self.uses_both_colors() {
-            let mut color_t = if self.noise_mode == NoiseMode::Color { noise_val } else { 0.0 };
-            if self.is_rect() && self.tile.enabled && self.tile.variation_enabled {
-                let std = ((self.tile.variation as f32) / 100.0).saturate();
-                color_t += std * gaussian(tile_x, tile_y, 1, self.tile.variation_seed);
-            }
-
-            color_t = color_t.mul_add(0.5, 0.5).saturate();
-
-            let mut col = self.color2.color().to_linear().lerp(self.color.color().to_linear(), color_t);
-            col.w = self.color.color().to_linear().w;
-            col
-        } else {
-            self.color.color().to_linear()
+        // We don't want noise to "continue" across tiles
+        let seed = self.noise.seed ^ (tile_x as u32).wrapping_mul(0x1f1f1f1f) ^ (tile_y as u32).wrapping_mul(0x1e1e1e1e);
+        let noise = match self.noise.mode {
+            NoiseMode::Color => Vec4::new(
+                self.noise(x, y, seed),
+                self.noise(x, y , seed ^ 0xA5A5A5A5),
+                self.noise(x, y, seed ^ 0x5A5A5A5A),
+                0.0
+            ),
+            NoiseMode::Alpha => Vec4::new(0.0, 0.0, 0.0,  self.noise(x, y, seed)),
         };
+        src += noise;
 
-        if self.noise_mode == NoiseMode::Alpha {
-            src.w *= noise_val.mul_add(0.5, 0.5).saturate();
+        if self.tile.variation_enabled && self.can_use_tilinging() {
+            src += f32::from(self.tile.variation) * Vec4::new(
+                noise::gaussian(tile_x, tile_y, 1, self.tile.variation_seed),
+                noise::gaussian(tile_x, tile_y, 1, self.tile.variation_seed ^ 0xA5A5A5A5),
+                noise::gaussian(tile_x, tile_y, 1, self.tile.variation_seed ^ 0x5A5A5A5A),
+                0.0
+            );
         }
+
+        src = src.saturate();
 
         let mut bevel_dist = if self.rect.bevel.enabled {
             let from_boundary = Vec4::new(gen_x as f32 + 0.5, gen_y as f32 + 0.5, (self.rect.width - gen_x) as f32 - 0.5, (self.rect.height - gen_y) as f32 - 0.5);
@@ -456,14 +496,11 @@ impl Default for TexturePass {
             name: None,
             enabled: true,
             color: Color::from_hex("#f48a71").unwrap().into(),
-            color2: Color::from_hex("#71c8f4").unwrap().into(),
             coverage: Coverage::default(),
             feature_x: IMG_SIZE / 4,
             feature_y: IMG_SIZE / 4,
             blend_mode: BlendMode::Alpha,
-            perlin: Default::default(),
-            white_noise: Default::default(),
-            noise_mode: Default::default(),
+            noise: Default::default(),
             rect: RectSettings::default(),
             tile: TileOptions::default(),
         }
@@ -509,15 +546,14 @@ impl TextureDefinition {
                 TexturePass {
                     name: Some("Rust".to_string()),
                     color: Color::from_hex("#70310054").unwrap().into(),
-                    perlin: PerlinSettings {
-                        enabled: true,
-                        scale: 15,
-                        octaves: 4,
-                        seed: rand::random::<u32>() & PerlinSettings::SEED_MASK,
+                    noise: NoiseSettings {
+                        noise_type: NoiseType::Perlin,
+                        mode: NoiseMode::Alpha,
+                        perlin_scale: FloatAsInt::from(0.03),
+                        perlin_octaves: 4,
+                        seed: rand::random(),
                         ..Default::default()
                     },
-                    white_noise: Default::default(),
-                    noise_mode: NoiseMode::Alpha,
                     ..Default::default()
                 },
                 TexturePass {
