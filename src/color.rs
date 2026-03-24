@@ -304,7 +304,7 @@ use glam::Vec4;
     #[test]
     fn test_to_hex_with_alpha() {
         let c = Color::new(255, 0, 128, 255);
-        assert_eq!(c.to_hex(), "#FF0080FF");
+        assert_eq!(c.to_hex(), "#ff0080ff");
     }
 
     #[test]
@@ -316,7 +316,7 @@ use glam::Vec4;
     #[test]
     fn test_to_hex_white() {
         let c = Color::new(255, 255, 255, 255);
-        assert_eq!(c.to_hex(), "#FFFFFFFF");
+        assert_eq!(c.to_hex(), "#ffffffff");
     }
 
     #[test]
