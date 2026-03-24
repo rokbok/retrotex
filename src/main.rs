@@ -7,6 +7,7 @@ use clap::{Parser as _};
 use eframe::egui;
 use egui::{Color32, ColorImage, TextureHandle};
 use glam::FloatExt as _;
+use rayon::prelude::*;
 use strum_macros::{AsRefStr, EnumString, VariantNames};
 
 use crate::{load_save_undo::LoadSaveUndo, preview_ui::OngoingDrag, processing::TextureLayers, util::single_hash};
@@ -42,6 +43,12 @@ pub fn idx_safe(x: i32, y: i32) -> usize {
     let x = x.clamp(0, IMG_SIZE - 1);
     let y = y.clamp(0, IMG_SIZE - 1);
     idx(x, y)
+}
+
+pub fn reverse_idx(index: usize) -> (i32, i32) {
+    let x = (index as i32) % IMG_SIZE;
+    let y = (index as i32) / IMG_SIZE;
+    (x, y)
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Default, AsRefStr, EnumString, VariantNames)]
@@ -116,34 +123,38 @@ impl RetroTexApp {
         let mut ao_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
         let mut lit_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
 
-        for y in 0..IMG_SIZE {
-            for x in 0..IMG_SIZE {
+        albedo_img.pixels.par_iter_mut()
+            .zip(depth_img.pixels.par_iter_mut())
+            .zip(self.layers.albedo.par_iter_mut())
+            .zip(self.layers.depth.par_iter_mut())
+            .enumerate()
+            .for_each(|(i, (((albedo_px, depth_px), albedo_layer), depth_layer))| {
+                let (x, y) = reverse_idx(i);
                 let s = self.def.generate_pixel(x, y);
-                albedo_img.pixels[idx(x, y)] = color::Color::from_linear(s.albedo.extend(1.0)).into();
-
+                *albedo_px = color::Color::from_linear(s.albedo.extend(1.0)).into();
+                *albedo_layer = s.albedo;
+                
                 let d = (s.depth + 128.0).round().clamp(0.0, 255.0) as u8;
-                depth_img.pixels[idx(x, y)] = egui::Rgba::from_srgba_unmultiplied(d, d, d, 255).into();
-
-                self.layers.albedo[idx(x, y)] = s.albedo;
-                self.layers.depth[idx(x, y)] = s.depth;
-            }
-        }
+                *depth_px = egui::Rgba::from_srgba_unmultiplied(d, d, d, 255).into();
+                *depth_layer = s.depth;
+            });
 
         self.layers.recalculate(&self.def.ao_settings, & self.def.lighting_settings);
 
-        for y in 0..IMG_SIZE {
-            for x in 0..IMG_SIZE {
-                let index = idx(x, y);
+        normal_img.pixels.par_iter_mut()
+            .zip(ao_img.pixels.par_iter_mut())
+            .zip(lit_img.pixels.par_iter_mut())
+            .enumerate()
+            .for_each(|(index, ((normal_px, ao_px), lit_px))| {
                 let n = self.layers.normal[index];
-                normal_img.pixels[index] = egui::Rgba::from_rgba_unmultiplied(n.x.mul_add(0.5, 0.5).saturate(), n.y.mul_add(0.5, 0.5).saturate(), n.z.saturate(), 1.0).into();
+                *normal_px = egui::Rgba::from_rgba_unmultiplied(n.x.mul_add(0.5, 0.5).saturate(), n.y.mul_add(0.5, 0.5).saturate(), n.z.saturate(), 1.0).into();
 
                 let ao = self.layers.ao[index];
-                ao_img.pixels[index] = egui::Rgba::from_srgba_unmultiplied((ao * 255.0) as u8, (ao * 255.0) as u8, (ao * 255.0) as u8, 255).into();
+                *ao_px = egui::Rgba::from_srgba_unmultiplied((ao * 255.0) as u8, (ao * 255.0) as u8, (ao * 255.0) as u8, 255).into();
 
                 let lit = self.layers.lit[index];
-                lit_img.pixels[index] = color::Color::from_linear(lit.extend(1.0)).into();
-            }
-        }
+                *lit_px = color::Color::from_linear(lit.extend(1.0)).into();
+            });
 
         if !self.initial_generation_done {
             info!("Writing initial output images for texture {}...", self.def.name);
@@ -255,6 +266,8 @@ fn main() {
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
         .init();
+
+
 
     let args = CommandLineArgs::parse();
     let output = args.output.unwrap_or_else(|| "output".to_string());

@@ -1,8 +1,9 @@
 use std::iter::zip;
 
 use glam::{FloatExt, IVec2, Vec2, Vec3};
+use rayon::prelude::*;
 
-use crate::{IMG_PIXEL_COUNT, IMG_SIZE, definition::{AOSettings, LightingSettings}, idx, idx_safe};
+use crate::{IMG_PIXEL_COUNT, IMG_SIZE, definition::{AOSettings, LightingSettings}, idx, idx_safe, reverse_idx};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
@@ -10,18 +11,16 @@ use log::{debug, error, log_enabled, info, warn, trace};
 
 fn calculate_normals(depth: &[f32; IMG_PIXEL_COUNT], normals: &mut Box<[Vec3; IMG_PIXEL_COUNT]>) {
     // Y points up, Unity-style
-    for y in 0..IMG_SIZE {
-        for x in 0..IMG_SIZE {
-            let index = idx(x, y);
-            let left  = if x > 0 {            depth[idx_safe(x - 1, y)] } else { depth[index] };
-            let right = if x < IMG_SIZE - 1 { depth[idx_safe(x + 1, y)] } else { depth[index] };
-            let up    = if y > 0 {            depth[idx_safe(x, y - 1)] } else { depth[index] };
-            let down  = if y < IMG_SIZE - 1 { depth[idx_safe(x, y + 1)] } else { depth[index] };
+    normals.par_iter_mut().enumerate().for_each(|(i, normal)| {
+        let (x, y) = reverse_idx(i);
+        let index = idx(x, y);
+        let left  = if x > 0 {            depth[idx_safe(x - 1, y)] } else { depth[index] };
+        let right = if x < IMG_SIZE - 1 { depth[idx_safe(x + 1, y)] } else { depth[index] };
+        let up    = if y > 0 {            depth[idx_safe(x, y - 1)] } else { depth[index] };
+        let down  = if y < IMG_SIZE - 1 { depth[idx_safe(x, y + 1)] } else { depth[index] };
 
-            let normal = Vec3::new(left - right, down - up, 1.0).normalize();
-            normals[index] = normal;
-        }
-    }
+        *normal = Vec3::new(left - right, down - up, 1.0).normalize();
+    });
 }
 
 fn calculate_ao(depth: &[f32; IMG_PIXEL_COUNT], ao: &mut Box<[f32; IMG_PIXEL_COUNT]>, light_dir: Vec3, settings: &AOSettings) {
@@ -48,36 +47,35 @@ fn calculate_ao(depth: &[f32; IMG_PIXEL_COUNT], ao: &mut Box<[f32; IMG_PIXEL_COU
     let lengths = dirs.map(| d | d.as_vec2().length() );
 
     let strength = settings.strength as f32 / 100.0;
-    for y in 0..IMG_SIZE {
-        for x in 0..IMG_SIZE {
-            let l = depth[idx_safe(x - 1, y)];
-            let r = depth[idx_safe(x + 1, y)];
-            let u = depth[idx_safe(x, y - 1)];
-            let d = depth[idx_safe(x, y + 1)];
-            let surface_slope = if settings.ignore_surface_normal { Vec2::ZERO } else { Vec2::new(r - l, d - u) * 0.5 };
-            let dd = depth[idx(x, y)];
-            let mut slope_sum = 0.0;
-            let pos = IVec2::new(x as i32, y as i32);
-            let mut weight_sum = 0.0;
-            for (dir, length) in zip(&dirs, &lengths) {
-                let dir_slope = surface_slope.dot(dir.as_vec2()) / length;
-                let mut slope: f32 = 0.0;
-                for i in 1..=settings.radius {
-                    let sample_pos = pos + *dir * i;
-                    if sample_pos.x < 0 || sample_pos.x >= IMG_SIZE as i32 || sample_pos.y < 0 || sample_pos.y >= IMG_SIZE as i32 {
-                        break;
-                    }
-                    let sample_depth: f32 = depth[idx(sample_pos.x as i32, sample_pos.y as i32)];
-                    slope = slope.max((sample_depth - dd) / (i as f32 * length) - dir_slope);
+    ao.par_iter_mut().enumerate().for_each(|(i, ao)| {
+        let (x, y) = reverse_idx(i);
+        let l = depth[idx_safe(x - 1, y)];
+        let r = depth[idx_safe(x + 1, y)];
+        let u = depth[idx_safe(x, y - 1)];
+        let d = depth[idx_safe(x, y + 1)];
+        let surface_slope = if settings.ignore_surface_normal { Vec2::ZERO } else { Vec2::new(r - l, d - u) * 0.5 };
+        let dd = depth[idx(x, y)];
+        let mut slope_sum = 0.0;
+        let pos = IVec2::new(x as i32, y as i32);
+        let mut weight_sum = 0.0;
+        for (dir, length) in zip(&dirs, &lengths) {
+            let dir_slope = surface_slope.dot(dir.as_vec2()) / length;
+            let mut slope: f32 = 0.0;
+            for i in 1..=settings.radius {
+                let sample_pos = pos + *dir * i;
+                if sample_pos.x < 0 || sample_pos.x >= IMG_SIZE as i32 || sample_pos.y < 0 || sample_pos.y >= IMG_SIZE as i32 {
+                    break;
                 }
-                let bias_w = bias_dir.dot(dir.as_vec2()).mul_add(0.5, 0.5);
-                let weight = 1.0.lerp(bias_w, bias_strength);
-                slope_sum += slope * weight;
-                weight_sum += weight;
+                let sample_depth: f32 = depth[idx(sample_pos.x as i32, sample_pos.y as i32)];
+                slope = slope.max((sample_depth - dd) / (i as f32 * length) - dir_slope);
             }
-            ao[idx(x, y)] = 1.0 - (slope_sum / weight_sum * strength).saturate();
+            let bias_w = bias_dir.dot(dir.as_vec2()).mul_add(0.5, 0.5);
+            let weight = 1.0.lerp(bias_w, bias_strength);
+            slope_sum += slope * weight;
+            weight_sum += weight;
         }
-    }
+        *ao = 1.0 - (slope_sum / weight_sum * strength).saturate();
+    });
 }
 
 fn calculate_light(
@@ -95,14 +93,14 @@ fn calculate_light(
     let lfact = 1.0 / light_dir.z.abs().max(0.1); // Make sure flat surface has the assigned color exactly -- within reason
 
     let lvec = Vec3::new(-light_dir.x, -light_dir.y, light_dir.z);
-    for i in 0..IMG_PIXEL_COUNT {
+    lit.par_iter_mut().enumerate().for_each(|(i, lit)| {
         let col = albedo[i];
         let normal = normal[i];
         let l = lvec.dot(normal).max(0.0) * lfact;
         let amb = ao[i];
         let f = 1.0.lerp(l, (light.impact as f32 / 100.0).saturate()) * amb;
-        lit[i] = col * f;
-    }
+        *lit = col * f;
+    });
 }
 
 pub struct TextureLayers {
