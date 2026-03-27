@@ -22,7 +22,7 @@ pub struct FloatAsInt<const F: i32> {
 impl<const F: i32> From<FloatAsInt<F>> for f32 {
     fn from(value: FloatAsInt<F>) -> Self {
         value.v as f32 / F as f32
-    }
+}
 }
 
 impl<const F: i32> From<f32> for FloatAsInt<F> {
@@ -294,6 +294,129 @@ impl Default for TileOptions {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
+pub struct Pattern {
+    pub rows: [u16; 16],
+    pub scale: i32,
+    pub mirror_x: bool,
+}
+
+impl Pattern {
+    pub const SIZE: i32 = 16;
+
+    #[inline]
+    pub fn sample(&self, x: i32, y: i32) -> bool {
+        let mut x = x / self.scale;
+        let y = y / self.scale;
+        if self.mirror_x && x >= 8 {
+            x = 15 - x;
+        }
+        self.rows[y as usize] & (1 << (x as u16)) != 0
+    }
+
+    #[inline]
+    pub fn sample_safe(&self, x: i32, y: i32) -> bool {
+        if x < 0 || x >= 16 * self.scale || y < 0 || y >= 16 * self.scale {
+            return false;
+        }
+        self.sample(x, y)
+    }
+
+    #[inline]
+    pub fn sample_clamp(&self, x: i32, y: i32) -> bool {
+        self.sample(x.clamp(0, 15), y.clamp(0, 15))
+    }
+
+    #[inline]
+    pub fn sample_wrap(&self, x: i32, y: i32) -> bool {
+        self.sample(x.rem_euclid(16), y.rem_euclid(16))
+    }
+
+    pub fn set(&mut self, x: i32, y: i32, value: bool) {
+        if self.mirror_x && x >= 8 {
+            self.set(15 - x, y, value);
+            return;
+        }
+        if value {
+            self.rows[y as usize] |= 1 << (x as u16);
+        } else {
+            self.rows[y as usize] &= !(1 << (x as u16));
+        }
+    }
+
+    pub fn set_safe(&mut self, x: i32, y: i32, value: bool) {
+        if x < 0 || x >= 16 || y < 0 || y >= 16 {
+            return;
+        }
+        self.set(x, y, value);
+    }
+
+    pub fn set_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, value: bool) {
+        let mut x = x1.floor() as i32;
+        let mut y = y1.floor() as i32;
+        let x2 = x2.floor() as i32;
+        let y2 = y2.floor() as i32;
+
+        let dx = (x2 - x).abs();
+        let dy = (y2 - y).abs();
+        let sx = if x < x2 { 1 } else { -1 };
+        let sy = if y < y2 { 1 } else { -1 };
+        let mut err = dx - dy;
+
+        loop {
+            self.set_safe(x, y, value);
+            if x == x2 && y == y2 {
+                break;
+            }           
+
+            let err2 = err * 2;
+            if err2 > -dy {
+                err -= dy;
+                x += sx;
+            }
+            if err2 < dx {
+                err += dx;
+                y += sy;
+            }
+        }
+    }
+    
+    pub(crate) fn fill(&mut self) {
+        for row in &mut self.rows {
+            *row = 0xFFFF;
+        }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        for row in &mut self.rows {
+            *row = 0;
+        }
+    }
+
+    pub(crate) fn invert(&mut self) {
+        let mask: u16 = if self.mirror_x { 0x00FF } else { 0xFFFF };
+        for row in &mut self.rows {
+            *row ^= mask;
+        }
+    }
+
+    pub(crate) fn randomize(&mut self) {        
+        for row in &mut self.rows {
+            *row = rand::random::<u16>();
+        }
+    }
+}
+
+impl Default for Pattern {
+    fn default() -> Self {
+        Self {
+            rows: [6168,15420,26214,50115,33153,33153,32769,49155,24582,12300,6168,3120,1632,960,384,0],
+            scale: 4,
+            mirror_x: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 #[serde(default)]
 pub struct TexturePass {
     pub name: Option<String>,
@@ -306,6 +429,7 @@ pub struct TexturePass {
     pub feature_y: i32,
     pub rect: RectSettings,
     pub tile: TileOptions,
+    pub pattern: Pattern,
 }
 
 impl TexturePass {
@@ -333,6 +457,10 @@ impl TexturePass {
     
     pub fn is_rect(&self) -> bool {
         self.coverage == Coverage::Rectangle
+    }
+
+    pub fn is_pattern(&self) -> bool {
+        self.coverage == Coverage::Pattern
     }
 
     pub fn uses_noise(&self) -> bool {
@@ -373,6 +501,14 @@ impl TexturePass {
             noise_val
         }
     }
+
+    fn tile_dim(&self) -> (i32, i32) {
+        match self.coverage {
+            Coverage::Rectangle => (self.rect.width + self.tile.x_gap, self.rect.height + self.tile.y_gap),
+            Coverage::Pattern => (16 * self.pattern.scale + self.tile.x_gap, 16 * self.pattern.scale + self.tile.y_gap),
+            _ => (IMG_SIZE, IMG_SIZE),
+        }
+    }
     
     fn apply(&self, dest: &mut Vec3, dest_d: &mut f32, x: i32, y: i32) {
         let mut gen_x = x;
@@ -380,7 +516,7 @@ impl TexturePass {
         let mut tile_x = 0;
         let mut tile_y = 0;
         
-        if self.is_rect() {
+        if self.can_use_tilinging() {
             gen_x -= self.feature_x;
             gen_y -= self.feature_y;
 
@@ -389,8 +525,7 @@ impl TexturePass {
                     return;
                 }
             } else {
-                let tile_width = self.rect.width + self.tile.x_gap;
-                let tile_height = self.rect.height + self.tile.y_gap;
+                let (tile_width, tile_height) = self.tile_dim();
 
                 match self.tile.shift_direction {
                     TileShiftDirection::Horizontal => gen_x -= (gen_y / tile_height) * self.tile.shift,
@@ -405,27 +540,34 @@ impl TexturePass {
                 tile_y = gen_y / tile_height;
                 gen_y %= tile_height;
             }
+        }
 
-            if gen_x >= self.rect.width || gen_y >= self.rect.height {
-                return;
-            }
+        match self.coverage {
+            Coverage::Full => {},
+            Coverage::Rectangle => {
+                if gen_x < 0 || gen_y < 0 || gen_x >= self.rect.width || gen_y >= self.rect.height {
+                    return;
+                }
+            },
+            Coverage::Pattern => {
+                if !self.pattern.sample_safe(gen_x, gen_y) {
+                    return;
+                }
+            },
         }
 
         let mut src = self.color.color().to_linear();
-
-        
         // We don't want noise to "continue" across tiles
         let seed = self.noise.seed ^ (tile_x as u32).wrapping_mul(0x1f1f1f1f) ^ (tile_y as u32).wrapping_mul(0x1e1e1e1e);
-        let noise = match self.noise.mode {
-            NoiseMode::Color => Vec4::new(
+        match self.noise.mode {
+            NoiseMode::Color => src += Vec4::new(
                 self.noise(x, y, seed),
                 self.noise(x, y , seed ^ 0xA5A5A5A5),
                 self.noise(x, y, seed ^ 0x5A5A5A5A),
                 0.0
             ),
-            NoiseMode::Alpha => Vec4::new(0.0, 0.0, 0.0,  self.noise(x, y, seed)),
-        };
-        src += noise;
+            NoiseMode::Alpha => src.w *= self.noise(x, y, seed).remap(-1.0, 1.0, 0.0, 1.0).saturate(),
+        }
 
         if self.tile.variation_enabled && self.can_use_tilinging() {
             src += f32::from(self.tile.variation) * Vec4::new(
@@ -503,6 +645,7 @@ impl Default for TexturePass {
             noise: Default::default(),
             rect: RectSettings::default(),
             tile: TileOptions::default(),
+            pattern: Pattern::default(),
         }
     }
 }

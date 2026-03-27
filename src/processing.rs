@@ -3,7 +3,7 @@ use std::iter::zip;
 use glam::{FloatExt, IVec2, Vec2, Vec3};
 use rayon::prelude::*;
 
-use crate::{IMG_PIXEL_COUNT, IMG_SIZE, definition::{AOSettings, LightingSettings}, idx, idx_safe, reverse_idx};
+use crate::{IMG_PIXEL_COUNT, IMG_SIZE, definition::{AOSettings, LightingSettings}, idx, idx_safe, idx2coords};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
@@ -12,7 +12,7 @@ use log::{debug, error, log_enabled, info, warn, trace};
 fn calculate_normals(depth: &[f32; IMG_PIXEL_COUNT], normals: &mut Box<[Vec3; IMG_PIXEL_COUNT]>) {
     // Y points up, Unity-style
     normals.par_iter_mut().enumerate().for_each(|(i, normal)| {
-        let (x, y) = reverse_idx(i);
+        let (x, y) = idx2coords(i);
         let index = idx(x, y);
         let left  = if x > 0 {            depth[idx_safe(x - 1, y)] } else { depth[index] };
         let right = if x < IMG_SIZE - 1 { depth[idx_safe(x + 1, y)] } else { depth[index] };
@@ -48,7 +48,7 @@ fn calculate_ao(depth: &[f32; IMG_PIXEL_COUNT], ao: &mut Box<[f32; IMG_PIXEL_COU
 
     let strength = settings.strength as f32 / 100.0;
     ao.par_iter_mut().enumerate().for_each(|(i, ao)| {
-        let (x, y) = reverse_idx(i);
+        let (x, y) = idx2coords(i);
         let l = depth[idx_safe(x - 1, y)];
         let r = depth[idx_safe(x + 1, y)];
         let u = depth[idx_safe(x, y - 1)];

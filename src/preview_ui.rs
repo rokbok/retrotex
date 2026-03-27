@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use egui::{Color32, Stroke};
 
-use crate::{DisplayMode, IMG_SIZE, RetroTexApp, definition::{Coverage, TexturePass}, idx, util::add_enum_dropdown};
+use crate::{DisplayMode, IMG_SIZE, RetroTexApp, definition::{Coverage, Pattern, TexturePass}, idx, util::add_enum_dropdown};
 
 
 #[allow(unused_imports)]
@@ -34,7 +34,7 @@ impl DragTarget {
         }
     }
 
-    fn update_pass(&self, pass: &mut TexturePass, pointer: egui::Pos2, drag: &OngoingDrag, image_scale: i32) {
+    fn update_pass(&self, pass: &mut TexturePass, pointer: egui::Pos2, drag: &RectParamDrag, image_scale: i32) {
         let delta = (pointer - drag.pointer_start) / image_scale as f32;
         let dx = delta.x.round() as i32;
         let dy = delta.y.round() as i32;
@@ -173,10 +173,262 @@ impl GrabCandidate {
     }
 }
 
-pub(crate) struct OngoingDrag {
+#[derive(Debug, Clone)]
+pub(crate) struct RectParamDrag {
     target: DragTarget,
     pointer_start: egui::Pos2,
     value_start: (i32, i32, i32, i32),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PatternDrawDrag {
+    last_pointer: egui::Pos2,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PatternRepositionDrag {
+    pointer_start: egui::Pos2,
+    position_start: (i32, i32),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PatternScaleDrag {
+    offset: egui::Vec2,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) enum OngoingDrag {
+    #[default] None,
+    RectParam(RectParamDrag),
+    PatternDraw(PatternDrawDrag),
+    PatternReposition(PatternRepositionDrag),
+    PatternScale(PatternScaleDrag),
+}
+
+
+impl TexturePass {
+    fn rect_gizmos(&mut self, drag: &mut OngoingDrag, ui: &mut egui::Ui, pointer_response: &egui::Response, image_rect: egui::Rect, image_scale: i32) {
+        if let OngoingDrag::RectParam(drag) = drag {
+            // Update ongoing drag
+            if pointer_response.dragged_by(egui::PointerButton::Primary) {
+                if let Some(hp) = pointer_response.interact_pointer_pos() {
+                    drag.target.update_pass(self, hp, drag, image_scale);
+                }
+            }
+        } else {
+            *drag = OngoingDrag::None;
+        }
+
+        // Calculate gizmo positions
+        let edit_rect = calculate_screen_rect(self.feature_x, self.feature_y, self.rect.width, self.rect.height, image_rect, image_scale);
+        let round_sz = if self.rect.round.enabled { self.rect.round.radius as f32 * image_scale as f32 } else { 0.0 };
+        
+        let corner_handle_size = 8.0;
+        let corner_handle_size_vec = egui::Vec2::splat(corner_handle_size);
+        let handles = [
+            egui::Rect::from_center_size(edit_rect.left_top(), corner_handle_size_vec),
+            egui::Rect::from_center_size(edit_rect.right_top(), corner_handle_size_vec),
+            egui::Rect::from_center_size(edit_rect.left_bottom(), corner_handle_size_vec),
+            egui::Rect::from_center_size(edit_rect.right_bottom(), corner_handle_size_vec),
+        ];
+        let round_handle_center = if self.rect.round.enabled {
+            Some(edit_rect.right_bottom() - egui::Vec2::new(0.0, round_sz))
+        } else {
+            None
+        };
+        let round_handle_rad = corner_handle_size / 2.0;
+        let line_width: f32 = 2.0;
+
+        let htile_rect = if self.tile.enabled && self.tile.x_count > 1 {
+            let offset = egui::Vec2::new(((self.rect.width + self.tile.x_gap) * image_scale) as f32, 0.0);
+            Some(egui::Rect::from_min_max(edit_rect.left_top() + offset, edit_rect.right_bottom() + offset))
+        } else {
+            None
+        };
+
+        let vtile_rect = if self.tile.enabled && self.tile.y_count > 1 {
+            let offset = egui::Vec2::new(0.0, ((self.rect.height + self.tile.y_gap) * image_scale) as f32);
+            Some(egui::Rect::from_min_max(edit_rect.left_top() + offset, edit_rect.right_bottom() + offset))
+        } else {
+            None
+        };
+
+        // Check grab target
+        let drag_target = if let OngoingDrag::RectParam(drag) = drag {
+            Some(drag.target)
+        } else if let Some(hp) = pointer_response.hover_pos() {
+            let mut grab_target = GrabCandidate::new();
+            grab_target.update_grab_target(DragTarget::Rect, edit_rect.distance_to_pos(hp).max(GrabCandidate::GRAB_TOLERANCE));
+            if grab_target.is(DragTarget::Rect) { // Check edges
+                let lwh = 0.5 * line_width;
+                grab_target.update_grab_target(DragTarget::Edge(0), (hp.x - (edit_rect.left() - lwh)).abs() - lwh);
+                grab_target.update_grab_target(DragTarget::Edge(1), (hp.x - (edit_rect.right() + lwh)).abs() - lwh);
+                grab_target.update_grab_target(DragTarget::Edge(2), (hp.y - (edit_rect.top() - lwh)).abs() - lwh);
+                grab_target.update_grab_target(DragTarget::Edge(3), (hp.y - (edit_rect.bottom() + lwh)).abs() - lwh);
+            }
+            
+            for (i, handle) in handles.iter().enumerate() {
+                grab_target.update_grab_target(DragTarget::CornerHandle(i), handle.distance_to_pos(hp));
+            }
+
+            if let Some(round_center) = round_handle_center {
+                grab_target.update_grab_target(DragTarget::RoundHandle, (round_center - hp).length() - round_handle_rad);
+            }
+
+            if let Some(htr) = htile_rect {
+                grab_target.update_grab_target(DragTarget::Tile(0), htr.distance_to_pos(hp));
+            }
+            if let Some(vtr) = vtile_rect {
+                grab_target.update_grab_target(DragTarget::Tile(1), vtr.distance_to_pos(hp));
+            }
+
+            grab_target.adjust_edges_for_round(hp, round_sz, edit_rect);
+            
+            if let Some(target) = grab_target.target {
+                if pointer_response.drag_started_by(egui::PointerButton::Primary) {
+                    *drag = OngoingDrag::RectParam(RectParamDrag { target, pointer_start: hp, value_start: target.start_values(self) });
+                }
+            }
+
+            grab_target.target
+        } else {
+            None
+        };
+
+        // Draw gizmos
+        let color = Color32::GREEN;
+        let active_color = Color32::WHITE;
+        let line_stroke = Stroke::new(line_width, color);
+        let active_line_stroke = Stroke::new(2.0 * line_width, active_color);
+        let handle_color = Color32::BLACK;
+        let active_handle_color = Color32::WHITE;
+        let tile_color = Color32::from_rgba_unmultiplied(0, 255, 255, 85);
+        let tile_stroke = Stroke::new(line_width, tile_color);
+
+        let painter  = ui.painter();
+
+        if let Some(htr) = htile_rect {
+            painter.rect_stroke(htr, round_sz,
+                choose(drag_target, DragTarget::Tile(0), tile_stroke, active_line_stroke), egui::StrokeKind::Outside);
+        }
+        if let Some(vtr) = vtile_rect {
+            painter.rect_stroke(vtr, round_sz,
+                choose(drag_target, DragTarget::Tile(1), tile_stroke, active_line_stroke), egui::StrokeKind::Outside);
+        }
+
+        painter.rect_stroke(edit_rect, round_sz, choose(drag_target, DragTarget::Rect, line_stroke, active_line_stroke), egui::StrokeKind::Outside);
+        if let Some(DragTarget::Edge(edge_index)) = drag_target {
+            let lwh = 0.5 * line_width;
+            let (p1, p2, offset, round_dir) = match edge_index {
+                0 => (edit_rect.left_top(),    edit_rect.left_bottom(),  egui::Vec2::new(-lwh, 0.0), egui::Vec2::new(0.0, 1.0)),
+                1 => (edit_rect.right_top(),   edit_rect.right_bottom(), egui::Vec2::new(lwh, 0.0),  egui::Vec2::new(0.0, 1.0)),
+                2 => (edit_rect.left_top(),    edit_rect.right_top(),    egui::Vec2::new(0.0, -lwh), egui::Vec2::new(1.0, 0.0)),
+                3 => (edit_rect.left_bottom(), edit_rect.right_bottom(), egui::Vec2::new(0.0, lwh),  egui::Vec2::new(1.0, 0.0)),
+                _ => unreachable!(),
+            };
+            let start = p1 + offset + round_dir * round_sz;
+            let end = p2 + offset - round_dir * round_sz;
+            painter.line_segment([start, end], active_line_stroke);
+        }
+
+        for (i, h) in handles.iter().enumerate() {
+            painter.rect_filled(*h, 0.0, choose(drag_target, DragTarget::CornerHandle(i), handle_color, active_handle_color));
+            painter.rect_stroke(*h, 0.0, choose(drag_target, DragTarget::CornerHandle(i), line_stroke, active_line_stroke), egui::StrokeKind::Outside);
+        }
+
+        if let Some(round_center) = round_handle_center {
+            painter.circle_filled(round_center, round_handle_rad, choose(drag_target, DragTarget::RoundHandle, handle_color, active_handle_color));
+            painter.circle_stroke(round_center, round_handle_rad, choose(drag_target, DragTarget::RoundHandle, line_stroke, active_line_stroke));
+        }
+    }
+
+    fn pattern_gizmos(&mut self, drag: &mut OngoingDrag, ui: &mut egui::Ui, pointer_response: &egui::Response, image_rect: egui::Rect, image_scale: i32) {
+        // Drag updates
+        match drag {
+            OngoingDrag::PatternDraw(d) => {
+                let draw = pointer_response.dragged_by(egui::PointerButton::Primary);
+                let erase = pointer_response.dragged_by(egui::PointerButton::Secondary);
+                if draw || erase {
+                    if let Some(hp) = pointer_response.interact_pointer_pos() {
+                        let last_x = ((d.last_pointer.x - image_rect.min.x) / image_scale as f32 - self.feature_x as f32) / self.pattern.scale as f32;
+                        let last_y = ((d.last_pointer.y - image_rect.min.y) / image_scale as f32 - self.feature_y as f32) / self.pattern.scale as f32;
+                        let new_x = ((pointer_response.interact_pointer_pos().unwrap().x - image_rect.min.x) / image_scale as f32 - self.feature_x as f32) / self.pattern.scale as f32;
+                        let new_y = ((pointer_response.interact_pointer_pos().unwrap().y - image_rect.min.y) / image_scale as f32 - self.feature_y as f32) / self.pattern.scale as f32;
+                        self.pattern.set_line(last_x, last_y, new_x, new_y, draw);
+                        d.last_pointer = hp;
+                    }
+                } else {
+                    *drag = OngoingDrag::None;
+                }
+            },
+            OngoingDrag::PatternReposition(d) => {
+                if pointer_response.dragged_by(egui::PointerButton::Primary) {
+                    if let Some(hp) = pointer_response.interact_pointer_pos() {
+                        let delta = hp - d.pointer_start;
+                        let delta_px = (delta / image_scale as f32).round();
+                        self.feature_x = (d.position_start.0 as f32 + delta_px.x).round() as i32;
+                        self.feature_y = (d.position_start.1 as f32 + delta_px.y).round() as i32;
+                    }
+                } else {
+                    *drag = OngoingDrag::None;
+                }
+            },
+            OngoingDrag::PatternScale(scl) => {
+                if pointer_response.dragged_by(egui::PointerButton::Primary) {
+                    if let Some(hp) = pointer_response.interact_pointer_pos() {
+                        let rel_pos = hp - scl.offset - (image_rect.left_top() + egui::Vec2::new(self.feature_x as f32, self.feature_y as f32) * image_scale as f32);
+                        let new_scale = rel_pos.y / (image_scale * Pattern::SIZE) as f32;
+                        self.pattern.scale = new_scale.round().max(1.0) as i32;
+                    }
+                } else {
+                    *drag = OngoingDrag::None;
+                }
+            },
+            _ => *drag = OngoingDrag::None,
+        }
+
+        let pattern_size = self.pattern.scale * Pattern::SIZE;
+        let pattern_rect = calculate_screen_rect(self.feature_x, self.feature_y, pattern_size, pattern_size, image_rect, image_scale);
+
+        // Calculate positions
+        let grab_handle_size = image_scale as f32 * egui::Vec2::new(4.0, 6.0);
+        let grab_handle_dist: f32 = image_scale as f32;
+        let grab_handle_pos = pattern_rect.left_top() + egui::Vec2::new(-0.5 * grab_handle_size.x - grab_handle_dist, 0.5 * pattern_rect.height());
+        let grab_handle_rect = egui::Rect::from_center_size(grab_handle_pos, grab_handle_size);
+        let corner_handle_size = 10.0;
+        let br = pattern_rect.right_bottom();
+        let corner_handle_rect = egui::Rect::from_min_max(br, br + egui::Vec2::splat(corner_handle_size));
+
+        // Drag start
+        if pointer_response.drag_started_by(egui::PointerButton::Primary) || pointer_response.drag_started_by(egui::PointerButton::Secondary) {
+            if let Some(hp) = pointer_response.interact_pointer_pos() {
+                if grab_handle_rect.contains(hp) {
+                    *drag = OngoingDrag::PatternReposition(PatternRepositionDrag { pointer_start: hp, position_start: (self.feature_x, self.feature_y) });
+                } else if pattern_rect.contains(hp) {
+                    *drag = OngoingDrag::PatternDraw(PatternDrawDrag { last_pointer: hp });
+                } else if corner_handle_rect.contains(hp) {
+                    *drag = OngoingDrag::PatternScale(PatternScaleDrag { offset: hp - pattern_rect.right_bottom() });
+                }
+            }
+        }
+  
+        
+        // Paint
+        let painter = ui.painter();
+        painter.rect_stroke(pattern_rect, 0.0, Stroke::new(2.0, Color32::WHITE), egui::StrokeKind::Outside);
+        painter.rect_filled(grab_handle_rect, image_scale as f32 * 0.5, Color32::WHITE);
+
+        for i in 0..6 { 
+            let pos = grab_handle_rect.center() + egui::Vec2::new(
+                -0.75 * image_scale as f32 + image_scale as f32 * 1.5 * (i % 2) as f32,
+                -1.5 * image_scale as f32 + image_scale as f32 * 1.5 * (i / 2) as f32
+            );
+            painter.circle_filled(pos, image_scale as f32 * 0.5, egui::Visuals::dark().widgets.active.bg_fill);
+        }
+
+        painter.rect_filled(corner_handle_rect, 0.0, Color32::BLACK);
+        painter.rect_stroke(corner_handle_rect, 0.0, Stroke::new(2.0, Color32::WHITE), egui::StrokeKind::Inside);
+    }
 }
 
 impl RetroTexApp {
@@ -189,16 +441,16 @@ impl RetroTexApp {
         if let Some(tex) = &self.textures {
             ui.centered_and_justified(| ui | {
                 let available = ui.available_rect_before_wrap();
-                let drag_response = ui.interact(available, ui.id().with("preview_drag"), egui::Sense::drag());
-                if drag_response.drag_stopped_by(egui::PointerButton::Primary) {
-                    self.drag = None;
+                let sense = egui::Sense::hover() | egui::Sense::drag();
+                let pointer_response = ui.interact(available, ui.id().with("preview_drag"), sense);
+                if pointer_response.drag_stopped_by(egui::PointerButton::Primary) {
+                    self.drag = OngoingDrag::None;
                 }
 
                 let image_scale = (available.width().min(available.height()) / IMG_SIZE as f32).floor().max(1.0) as i32;
                 let image_size_sc = IMG_SIZE as f32 * image_scale as f32;
                 let image_size = egui::Vec2::new(image_size_sc, image_size_sc);
                 let image_rect = egui::Rect::from_center_size(available.center(), image_size);
-                let image_response = ui.allocate_rect(image_rect, egui::Sense::hover());
                 
                 let tex = match self.display_settings.mode {
                     DisplayMode::Lit => &tex.lit,
@@ -218,154 +470,19 @@ impl RetroTexApp {
                         self.preview_editing = None;
                     } else {
                         match self.def.passes[pass_idx].coverage {
-                            Coverage::Rectangle => {},
+                            Coverage::Rectangle => self.def.passes[pass_idx].rect_gizmos(&mut self.drag, ui, &pointer_response, image_rect, image_scale),
+                            Coverage::Pattern => self.def.passes[pass_idx].pattern_gizmos(&mut self.drag, ui, &pointer_response, image_rect, image_scale),
                             _ => {},
                         }
                     }
                 };
-                let edit_pass = self.preview_editing.map(|idx| &mut self.def.passes[idx]);
-                if let Some(pass) = edit_pass {
-                    if pass.is_rect() {
-                        // Drag update
-                        if let Some(drag) = &self.drag {
-                            // Update ongoing drag
-                            if drag_response.dragged_by(egui::PointerButton::Primary) {
-                                if let Some(hp) = drag_response.interact_pointer_pos() {
-                                    drag.target.update_pass(pass, hp, drag, image_scale);
-                                }
-                            }
-                        }
 
-                        // Calculate gizmo positions
-                        let edit_rect = calculate_screen_rect(pass.feature_x, pass.feature_y, pass.rect.width, pass.rect.height, image_rect, image_scale);
-                        let round_sz = if pass.rect.round.enabled { pass.rect.round.radius as f32 * image_scale as f32 } else { 0.0 };
-                        
-                        let corner_handle_size = 8.0;
-                        let corner_handle_size_vec = egui::Vec2::splat(corner_handle_size);
-                        let handles = [
-                            egui::Rect::from_center_size(edit_rect.left_top(), corner_handle_size_vec),
-                            egui::Rect::from_center_size(edit_rect.right_top(), corner_handle_size_vec),
-                            egui::Rect::from_center_size(edit_rect.left_bottom(), corner_handle_size_vec),
-                            egui::Rect::from_center_size(edit_rect.right_bottom(), corner_handle_size_vec),
-                        ];
-                        let round_handle_center = if pass.rect.round.enabled {
-                            Some(edit_rect.right_bottom() - egui::Vec2::new(0.0, round_sz))
-                        } else {
-                            None
-                        };
-                        let round_handle_rad = corner_handle_size / 2.0;
-                        let line_width: f32 = 2.0;
-
-                        let htile_rect = if pass.tile.enabled && pass.tile.x_count > 1 {
-                            let offset = egui::Vec2::new(((pass.rect.width + pass.tile.x_gap) * image_scale) as f32, 0.0);
-                            Some(egui::Rect::from_min_max(edit_rect.left_top() + offset, edit_rect.right_bottom() + offset))
-                        } else {
-                            None
-                        };
-
-                        let vtile_rect = if pass.tile.enabled && pass.tile.y_count > 1 {
-                            let offset = egui::Vec2::new(0.0, ((pass.rect.height + pass.tile.y_gap) * image_scale) as f32);
-                            Some(egui::Rect::from_min_max(edit_rect.left_top() + offset, edit_rect.right_bottom() + offset))
-                        } else {
-                            None
-                        };
-
-                        // Check grab target
-                        let drag_target = if let Some(drag) = &self.drag {
-                            Some(drag.target)
-                        } else if let Some(hp) = drag_response.hover_pos() {
-                            let mut grab_target = GrabCandidate::new();
-                            grab_target.update_grab_target(DragTarget::Rect, edit_rect.distance_to_pos(hp).max(GrabCandidate::GRAB_TOLERANCE));
-                            if grab_target.is(DragTarget::Rect) { // Check edges
-                                let lwh = 0.5 * line_width;
-                                grab_target.update_grab_target(DragTarget::Edge(0), (hp.x - (edit_rect.left() - lwh)).abs() - lwh);
-                                grab_target.update_grab_target(DragTarget::Edge(1), (hp.x - (edit_rect.right() + lwh)).abs() - lwh);
-                                grab_target.update_grab_target(DragTarget::Edge(2), (hp.y - (edit_rect.top() - lwh)).abs() - lwh);
-                                grab_target.update_grab_target(DragTarget::Edge(3), (hp.y - (edit_rect.bottom() + lwh)).abs() - lwh);
-                            }
-                            
-                            for (i, handle) in handles.iter().enumerate() {
-                                grab_target.update_grab_target(DragTarget::CornerHandle(i), handle.distance_to_pos(hp));
-                            }
-
-                            if let Some(round_center) = round_handle_center {
-                                grab_target.update_grab_target(DragTarget::RoundHandle, (round_center - hp).length() - round_handle_rad);
-                            }
-
-                            if let Some(htr) = htile_rect {
-                                grab_target.update_grab_target(DragTarget::Tile(0), htr.distance_to_pos(hp));
-                            }
-                            if let Some(vtr) = vtile_rect {
-                                grab_target.update_grab_target(DragTarget::Tile(1), vtr.distance_to_pos(hp));
-                            }
-
-                            grab_target.adjust_edges_for_round(hp, round_sz, edit_rect);
-                            
-                            if let Some(target) = grab_target.target {
-                                if drag_response.drag_started_by(egui::PointerButton::Primary) {
-                                    self.drag = Some(OngoingDrag { target, pointer_start: hp, value_start: target.start_values(pass) });
-                                }
-                            }
-
-                            grab_target.target
-                        } else {
-                            None
-                        };
-
-                        // Draw gizmos
-                        let color = Color32::GREEN;
-                        let active_color = Color32::WHITE;
-                        let line_stroke = Stroke::new(line_width, color);
-                        let active_line_stroke = Stroke::new(2.0 * line_width, active_color);
-                        let handle_color = Color32::BLACK;
-                        let active_handle_color = Color32::WHITE;
-                        let tile_color = Color32::from_rgba_unmultiplied(0, 255, 255, 85);
-                        let tile_stroke = Stroke::new(line_width, tile_color);
-
-                        let painter  = ui.painter();
-
-                        if let Some(htr) = htile_rect {
-                            painter.rect_stroke(htr, round_sz,
-                                choose(drag_target, DragTarget::Tile(0), tile_stroke, active_line_stroke), egui::StrokeKind::Outside);
-                        }
-                        if let Some(vtr) = vtile_rect {
-                            painter.rect_stroke(vtr, round_sz,
-                                choose(drag_target, DragTarget::Tile(1), tile_stroke, active_line_stroke), egui::StrokeKind::Outside);
-                        }
-
-                        painter.rect_stroke(edit_rect, round_sz, choose(drag_target, DragTarget::Rect, line_stroke, active_line_stroke), egui::StrokeKind::Outside);
-                        if let Some(DragTarget::Edge(edge_index)) = drag_target {
-                            let lwh = 0.5 * line_width;
-                            let (p1, p2, offset, round_dir) = match edge_index {
-                                0 => (edit_rect.left_top(),    edit_rect.left_bottom(),  egui::Vec2::new(-lwh, 0.0), egui::Vec2::new(0.0, 1.0)),
-                                1 => (edit_rect.right_top(),   edit_rect.right_bottom(), egui::Vec2::new(lwh, 0.0),  egui::Vec2::new(0.0, 1.0)),
-                                2 => (edit_rect.left_top(),    edit_rect.right_top(),    egui::Vec2::new(0.0, -lwh), egui::Vec2::new(1.0, 0.0)),
-                                3 => (edit_rect.left_bottom(), edit_rect.right_bottom(), egui::Vec2::new(0.0, lwh),  egui::Vec2::new(1.0, 0.0)),
-                                _ => unreachable!(),
-                            };
-                            let start = p1 + offset + round_dir * round_sz;
-                            let end = p2 + offset - round_dir * round_sz;
-                            painter.line_segment([start, end], active_line_stroke);
-                        }
-
-                        for (i, h) in handles.iter().enumerate() {
-                            painter.rect_filled(*h, 0.0, choose(drag_target, DragTarget::CornerHandle(i), handle_color, active_handle_color));
-                            painter.rect_stroke(*h, 0.0, choose(drag_target, DragTarget::CornerHandle(i), line_stroke, active_line_stroke), egui::StrokeKind::Outside);
-                        }
-
-                        if let Some(round_center) = round_handle_center {
-                            painter.circle_filled(round_center, round_handle_rad, choose(drag_target, DragTarget::RoundHandle, handle_color, active_handle_color));
-                            painter.circle_stroke(round_center, round_handle_rad, choose(drag_target, DragTarget::RoundHandle, line_stroke, active_line_stroke));
-                        }
-                    }
-                }
-
-                if image_response.hovered() {
-                    if let Some(hover_pos) = image_response.hover_pos() {
-                        image_response.on_hover_ui_at_pointer(| ui | {
-                            let x = ((hover_pos.x - image_rect.min.x) / image_scale as f32).floor() as i32;
-                            let y = ((hover_pos.y - image_rect.min.y) / image_scale as f32).floor() as i32;
-                            if x >= 0 && x < IMG_SIZE && y >= 0 && y < IMG_SIZE {
+                if pointer_response.hovered() {
+                    if let Some(hover_pos) = pointer_response.hover_pos() {
+                        let x = ((hover_pos.x - image_rect.min.x) / image_scale as f32).floor() as i32;
+                        let y = ((hover_pos.y - image_rect.min.y) / image_scale as f32).floor() as i32;
+                        if x >= 0 && x < IMG_SIZE && y >= 0 && y < IMG_SIZE {
+                            pointer_response.on_hover_ui_at_pointer(| ui | {
                                 self.tmp_str.clear();
                                 let index = idx(x, y);
                                 write!(self.tmp_str, "Pixel ({}, {})", x, y).unwrap();
@@ -380,10 +497,8 @@ impl RetroTexApp {
                                 write!(self.tmp_str, "\nNormal: ({:.3}, {:.3}, {:.3})", normal.x, normal.y, normal.z).unwrap();
 
                                 ui.label(&self.tmp_str);
-                            } else {
-                                ui.label("Outside");
-                            }
-                        });
+                            });
+                        }
                     }
                 }
             });

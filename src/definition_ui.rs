@@ -1,6 +1,6 @@
 use std::{fmt::Write as _};
 
-use egui::{Button, TextEdit, Vec2, text::{CCursor, CCursorRange}};
+use egui::{Button, TextEdit, text::{CCursor, CCursorRange}};
 use strum::{EnumCount, IntoEnumIterator};
 use crate::{IMG_SIZE, RetroTexApp, color::{Color, EditableColor}, definition::{NoiseType, TexturePass}, util::add_enum_dropdown};
 
@@ -13,7 +13,7 @@ pub enum PassOperation { Remove(usize), MoveUp(usize), MoveDown(usize) }
 
 fn add_full_width<T: egui::Widget>(ui: &mut egui::Ui, widget: T) -> egui::Response {
     let available_width = ui.available_width();
-    ui.add_sized([available_width, 0.0], widget)
+    ui.add_sized([available_width, ui.spacing().interact_size.y], widget)
 }
 
 fn reseed_button(ui: &mut egui::Ui, seed: &mut u32) {
@@ -84,7 +84,6 @@ fn mode_selector<T: IntoEnumIterator + AsRef<str> + Eq + EnumCount + Copy>(ui: &
     ret
 }
 
-
 impl RetroTexApp {
     pub fn definition_ui(&mut self, ui: &mut egui::Ui) {
         let monospace_id = egui::TextStyle::Monospace.resolve(ui.style());
@@ -121,31 +120,32 @@ impl RetroTexApp {
             let pass_count = self.def.passes.len();
             for (pass_idx, pass) in self.def.passes.iter_mut().enumerate() {
                 ui.group(| ui | {
-                    self.tmp_str.clear();
-                    match &pass.name {
-                        Some(name) => self.tmp_str.push_str(name),
-                        None => {
-                            self.tmp_str.clear();
-                            write!(self.tmp_str, "Pass {}", pass_idx).unwrap();
-                        },
-                    }
-
-                    let name_response = add_full_width(ui, egui::TextEdit::singleline(&mut self.tmp_str).hint_text("Pass Name"));
-                    if name_response.changed() {
-                        match &mut pass.name {
-                            Some(name) => {
-                                name.clear();
-                                name.push_str(&self.tmp_str);
+                    ui.horizontal(| ui | {
+                        ui.checkbox(&mut pass.enabled, "").on_hover_text("Enable or disable this pass");
+                        self.tmp_str.clear();
+                        match &pass.name {
+                            Some(name) => self.tmp_str.push_str(name),
+                            None => {
+                                self.tmp_str.clear();
+                                write!(self.tmp_str, "Pass {}", pass_idx).unwrap();
                             },
-                            None => pass.name = Some(self.tmp_str.clone()),
                         }
-                    }
 
-                    if self.tmp_str.is_empty() && !name_response.has_focus() {
-                        pass.name = None;
-                    }
-                    
-                    ui.checkbox(&mut pass.enabled, "Enabled");
+                        let name_response = add_full_width(ui, egui::TextEdit::singleline(&mut self.tmp_str).hint_text("Pass Name"));
+                        if name_response.changed() {
+                            match &mut pass.name {
+                                Some(name) => {
+                                    name.clear();
+                                    name.push_str(&self.tmp_str);
+                                },
+                                None => pass.name = Some(self.tmp_str.clone()),
+                            }
+                        }
+
+                        if self.tmp_str.is_empty() && !name_response.has_focus() {
+                            pass.name = None;
+                        }
+                    });
 
                     ui.horizontal_wrapped(| ui | {
                         add_color_edit(ui, &mut pass.color, monospace_width);
@@ -158,7 +158,6 @@ impl RetroTexApp {
 
                     if pass.uses_noise() {
                         ui.horizontal_wrapped(| ui | {
-                            ui.label("Noise Mode:");
                             add_enum_dropdown(ui, &mut pass.noise.mode, "noise_mode", pass_idx, false);
                             match pass.noise.noise_type {
                                 NoiseType::Perlin => {
@@ -186,13 +185,50 @@ impl RetroTexApp {
                     }   
 
                     ui.separator();
-                    let new_coverage = mode_selector(ui, &mut pass.coverage, "Shape:");
+                    let new_coverage = mode_selector(ui, &mut pass.coverage, "Shape");
                     if let Some(cov) = new_coverage {
                         if cov.is_gizmo_editable() {
                             self.preview_editing = Some(pass_idx);
                         } else if self.preview_editing == Some(pass_idx) {
                             self.preview_editing = None;
                         }
+                    }
+
+                    if pass.is_pattern() {
+                        let is_editing = self.preview_editing == Some(pass_idx);
+                        if ui.add_sized([ui.available_width(), ui.spacing().interact_size.y],
+                            Button::selectable(is_editing, if is_editing { "Editing Pattern..." } else { "Edit Pattern" })).clicked() {
+                            if is_editing {
+                                self.preview_editing = None;
+                            } else {
+                                self.preview_editing = Some(pass_idx);
+                            }
+                        }
+
+                        ui.horizontal(| ui | {
+                            ui.label("Position:");
+                            ui.add(egui::DragValue::new(&mut pass.feature_x).range(-IMG_SIZE..=(IMG_SIZE - 1)).prefix("X:"));
+                            ui.add(egui::DragValue::new(&mut pass.feature_y).range(-IMG_SIZE..=(IMG_SIZE - 1)).prefix("Y:"));
+                            ui.label("Scale:");
+                            ui.add(egui::DragValue::new(&mut pass.pattern.scale).range(1..=IMG_SIZE));
+                            ui.checkbox(&mut pass.pattern.mirror_x, "Mirror");
+                        });
+
+                        ui.horizontal(| ui | {
+                            let w = (ui.available_width() - 3.0 * ui.spacing().item_spacing.x) / 4.0;
+                            if ui.add_sized([w, ui.spacing().interact_size.y], egui::Button::new("Fill")).clicked() {
+                                pass.pattern.fill();
+                            }
+                            if ui.add_sized([w, ui.spacing().interact_size.y], egui::Button::new("Clear")).clicked() {
+                                pass.pattern.clear();
+                            }
+                            if ui.add_sized([w, ui.spacing().interact_size.y], egui::Button::new("Invert")).clicked() {
+                                pass.pattern.invert();
+                            }
+                            if ui.add_sized([w, ui.spacing().interact_size.y], egui::Button::new("Randomize")).clicked() {
+                                pass.pattern.randomize();
+                            }
+                        });
                     }
 
                     if pass.is_rect() {
@@ -216,7 +252,7 @@ impl RetroTexApp {
                             ui.checkbox(&mut pass.rect.round.enabled, "Round").on_hover_text("Round rect corners");
                             if pass.rect.round.enabled {
                                 ui.label("Radius:");
-                                ui.add(egui::DragValue::new(&mut pass.rect.round.radius).range(1..=(pass.rect.width.min(pass.rect.height))));
+                                ui.add(egui::DragValue::new(&mut pass.rect.round.radius).range(1..=(pass.rect.width.min(pass.rect.height) / 2)));
                                 ui.checkbox(&mut pass.rect.round.anti_alias, "Anti-Alias").on_hover_text("Enable anti-aliasing for rounded corners (albedo only)");
                             }
                         });

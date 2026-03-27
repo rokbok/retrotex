@@ -45,7 +45,7 @@ pub fn idx_safe(x: i32, y: i32) -> usize {
     idx(x, y)
 }
 
-pub fn reverse_idx(index: usize) -> (i32, i32) {
+pub fn idx2coords(index: usize) -> (i32, i32) {
     let x = (index as i32) % IMG_SIZE;
     let y = (index as i32) / IMG_SIZE;
     (x, y)
@@ -85,7 +85,7 @@ struct RetroTexApp {
     display_settings: DisplaySettings,
     output_dir: String,
     initial_generation_done: bool,
-    drag: Option<OngoingDrag>,
+    drag: OngoingDrag,
     preview_editing: Option<usize>,
 }
 
@@ -104,7 +104,7 @@ impl RetroTexApp {
             display_settings: DisplaySettings::default(),
             output_dir,
             initial_generation_done: false,
-            drag: None,
+            drag: OngoingDrag::None,
             preview_editing: None,
         };
 
@@ -129,7 +129,7 @@ impl RetroTexApp {
             .zip(self.layers.depth.par_iter_mut())
             .enumerate()
             .for_each(|(i, (((albedo_px, depth_px), albedo_layer), depth_layer))| {
-                let (x, y) = reverse_idx(i);
+                let (x, y) = idx2coords(i);
                 let s = self.def.generate_pixel(x, y);
                 *albedo_px = color::Color::from_linear(s.albedo.extend(1.0)).into();
                 *albedo_layer = s.albedo;
