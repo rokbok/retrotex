@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="31.999998"
+   height="31.999998"
+   viewBox="0 0 8.466666 8.4666661"
+   version="1.1"
+   id="svg5"
+   inkscape:export-filename="reorder"
+   inkscape:export-xdpi="96"
+   inkscape:export-ydpi="96"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview7"
+     pagecolor="#000000"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     showgrid="true"
+     inkscape:zoom="24.216947"
+     inkscape:cx="25.684493"
+     inkscape:cy="27.109115"
+     inkscape:window-width="3840"
+     inkscape:window-height="2054"
+     inkscape:window-x="3829"
+     inkscape:window-y="-11"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1">
+    <inkscape:grid
+       type="xygrid"
+       id="grid543" />
+  </sodipodi:namedview>
+  <defs
+     id="defs2" />
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <rect
+       style="fill:#ffffff;stroke:none;stroke-width:0.0369944;stroke-linecap:round"
+       id="rect290"
+       width="5.2546725"
+       height="0.49217221"
+       x="1.6244948"
+       y="3.1934972" />
+    <rect
+       style="fill:#ffffff;stroke:none;stroke-width:0.0369944;stroke-linecap:round"
+       id="rect290-3"
+       width="5.2546721"
+       height="0.49217221"
+       x="1.6244948"
+       y="3.9872472" />
+    <rect
+       style="fill:#ffffff;stroke:none;stroke-width:0.0369944;stroke-linecap:round"
+       id="rect290-3-3"
+       width="5.2546721"
+       height="0.49217221"
+       x="1.6244948"
+       y="4.7809973" />
+    <path
+       style="fill:#ffffff;stroke:none;stroke-width:0.0661458;stroke-linecap:round"
+       d="M 3.7041667,5.8208334 H 4.7625 V 6.35 H 5.55625 L 4.2333334,7.4083333 2.9104167,6.35 h 0.79375 z"
+       id="path652" />
+    <path
+       style="fill:#ffffff;stroke:none;stroke-width:0.0661458;stroke-linecap:round"
+       d="M 4.7625001,2.6458334 H 3.7041668 V 2.1166668 h -0.79375 L 4.2333334,1.0583335 5.5562501,2.1166668 h -0.79375 z"
+       id="path652-4" />
+  </g>
+</svg>

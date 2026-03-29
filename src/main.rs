@@ -281,6 +281,9 @@ fn main() {
     eframe::run_native(
         RetroTexApp::name(),
         native_options,
-        Box::new(|_| Ok(Box::new(RetroTexApp::new(output)))),
+        Box::new(| cc |  {
+            egui_extras::install_image_loaders(&cc.egui_ctx);
+            Ok(Box::new(RetroTexApp::new(output)))
+        }),
     ).expect("Error running app")
 }
