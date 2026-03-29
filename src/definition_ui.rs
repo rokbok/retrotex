@@ -1,7 +1,6 @@
 
-use std::fmt::Write as _;
-
 use egui::{Button, Checkbox, Image, TextEdit, include_image, text::{CCursor, CCursorRange}};
+use glam::FloatExt;
 use strum::{EnumCount, IntoEnumIterator};
 use crate::{IMG_SIZE, RetroTexApp, color::{Color, EditableColor}, definition::{NoiseType, TexturePass}, util::add_enum_dropdown};
 
@@ -10,11 +9,11 @@ use log::{debug, error, log_enabled, info, warn, trace};
 
 const SECTION_SPACING: f32 = 10.0;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum PassOperation { Remove(usize), MoveUp(usize), MoveDown(usize) }
+const DRAG_SCROLL_PART: f32 = 0.15;
+const DRAG_SCROLL_SPEED_MAX: f32 = 256.0;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum PassDrag { Started(usize), Dragging(usize), Stopped(usize) }
+enum PassDrag { StartedOrDragging(usize), Stopped(usize) }
 
 fn add_full_width<T: egui::Widget>(ui: &mut egui::Ui, widget: T) -> egui::Response {
     let available_width = ui.available_width();
@@ -89,11 +88,11 @@ fn mode_selector<T: IntoEnumIterator + AsRef<str> + Eq + EnumCount + Copy>(ui: &
     ret
 }
 
-fn find_closest_y_center(y: f32, rects: &[egui::Rect]) -> usize {
-    if rects.len() <= 1 || y <= rects[0].center().y {
+fn find_closest_y_center(y: f32, rects: &[egui::Response]) -> usize {
+    if rects.len() <= 1 || y <= rects[0].rect.center().y {
         return 0;
     }
-    if y >= rects[rects.len() - 1].center().y {
+    if y >= rects[rects.len() - 1].rect.center().y {
         return rects.len() - 1;
     }
 
@@ -101,15 +100,15 @@ fn find_closest_y_center(y: f32, rects: &[egui::Rect]) -> usize {
     let mut last = rects.len();
     while first + 1 < last {
         let mid = (first + last) / 2;
-        if y < rects[mid].center().y {
+        if y < rects[mid].rect.center().y {
             last = mid;
         } else {
             first = mid;
         }
     }
     assert!(first + 1 == last);
-    assert!(y >= rects[first].center().y && y <= rects[last].center().y);
-    if (y - rects[first].center().y) < (rects[last].center().y - y) {
+    assert!(y >= rects[first].rect.center().y && y <= rects[last].rect.center().y);
+    if (y - rects[first].rect.center().y) < (rects[last].rect.center().y - y) {
         first
     } else {
         last
@@ -117,11 +116,10 @@ fn find_closest_y_center(y: f32, rects: &[egui::Rect]) -> usize {
 }
 
 impl RetroTexApp {
-    fn pass_ui(&mut self, ui: &mut egui::Ui, pass_idx: usize, monospace_width: f32) -> (Option<PassOperation>, Option<PassDrag>) {
-        let pass_count = self.def.passes.len();
+    fn pass_ui(&mut self, ui: &mut egui::Ui, pass_idx: usize, monospace_width: f32) -> (bool, Option<PassDrag>) {
         let pass = &mut self.def.passes[pass_idx];
         let group = ui.group(| ui | {
-            let mut pass_op = Option::<PassOperation>::None;
+            let mut remove = false;
             let mut pass_drag = Option::<PassDrag>::None;
             ui.horizontal(| ui | {
                 let isy = ui.spacing().interact_size.y;
@@ -129,23 +127,17 @@ impl RetroTexApp {
                     .tint(ui.visuals().text_color())
                     .sense(egui::Sense::drag()));
                 if drag.drag_started() {
-                    pass_drag = Some(PassDrag::Started(pass_idx));
+                    pass_drag = Some(PassDrag::StartedOrDragging(pass_idx));
                 }
                 if drag.dragged() {
-                    pass_drag = Some(PassDrag::Dragging(pass_idx));
+                    pass_drag = Some(PassDrag::StartedOrDragging(pass_idx));
                 }
                 if drag.drag_stopped() {
                     pass_drag = Some(PassDrag::Stopped(pass_idx));
                 }
                 ui.add(Checkbox::without_text(&mut pass.enabled)).on_hover_text("Enable or disable this pass");
                 self.tmp_str.clear();
-                match &pass.name {
-                    Some(name) => self.tmp_str.push_str(name),
-                    None => {
-                        self.tmp_str.clear();
-                        write!(self.tmp_str, "Pass {}", pass_idx).unwrap();
-                    },
-                }
+                pass.write_name(&mut self.tmp_str, pass_idx).expect("Writing to a string should never fail");
 
                 let aw = ui.available_width();
                 let tw = aw - isy - ui.spacing().item_spacing.x;
@@ -165,7 +157,7 @@ impl RetroTexApp {
                 }
 
                 if ui.add_sized([isy, isy], egui::Button::new("X")).clicked() {
-                    pass_op = Some(PassOperation::Remove(pass_idx));
+                    remove = true;
                 }
             });
 
@@ -337,28 +329,8 @@ impl RetroTexApp {
                         ui.add_space(SECTION_SPACING);
                     };
                 }
-
-                ui.separator();
-
-                ui.horizontal(| ui | {
-                    if pass_idx > 0 {
-                        let resp = ui.button("Up");
-                        if resp.clicked() {
-                            pass_op = Some(PassOperation::MoveUp(pass_idx));
-                        }
-                    }
-                    if pass_idx < pass_count - 1 {
-                        let resp = ui.button("Down");
-                        if resp.clicked() {
-                            pass_op = Some(PassOperation::MoveDown(pass_idx));
-                        }
-                    }
-                    if ui.add_sized([ui.available_width(), ui.spacing().interact_size.y], Button::new("Remove")).clicked() {
-                        pass_op = Some(PassOperation::Remove(pass_idx));
-                    }
-                });
             }
-            (pass_op, pass_drag)
+            (remove, pass_drag)
         });
 
         group.inner
@@ -371,14 +343,9 @@ impl RetroTexApp {
         let monospace_width = ui.fonts_mut(|f| {
             f.glyph_width(&monospace_id, 'W') // use a wide character as baseline
         });
-        
+
         egui::ScrollArea::vertical().show(ui, | ui | {
             ui.heading(&self.def.name);
-            ui.horizontal(| ui | {
-                ui.label("Background:");
-                add_color_edit(ui, &mut self.def.background, monospace_width);
-            });
-            ui.separator();
             ui.horizontal(| ui | {
                 ui.label("Light direction:");
                 ui.add(egui::DragValue::new(&mut self.def.lighting_settings.direction[0]).range(-100..=100));
@@ -395,28 +362,33 @@ impl RetroTexApp {
             //    ui.checkbox(&mut self.def.ao_settings.ignore_surface_normal, "Ignore Surface Normal").on_hover_text("Experimental; Probably not something you want to use");
             });
             
+        
             let mut drag_op = Option::<PassDrag>::None;
-            let mut pass_op = Option::<PassOperation>::None;
+            let mut drop_targets = Vec::<egui::Response>::with_capacity(self.def.passes.len() + 1);
+            let mut remove = Option::<usize>::None;
             let pass_gap = 4.0_f32;
-            let mut ends = Vec::<egui::Rect>::with_capacity(self.def.passes.len() + 1);
             let (_, resp) = ui.allocate_exact_size(egui::Vec2::new(ui.available_width(), pass_gap), egui::Sense::empty());
-            ends.push(resp.rect);
+            drop_targets.push(resp);
             ui.scope(| ui | {
                 for pass_idx in 0..self.def.passes.len() {
-                    let (new_op, new_drag) = self.pass_ui(ui, pass_idx, monospace_width);
+                    let (remove_this, new_drag) = self.pass_ui(ui, pass_idx, monospace_width);
                     let (_, resp) = ui.allocate_exact_size(egui::Vec2::new(ui.available_width(), pass_gap), egui::Sense::empty());
-                    ends.push(resp.rect);
-                    pass_op = new_op.or(pass_op);
+                    drop_targets.push(resp);
+                    if remove_this {
+                        remove = Some(pass_idx);
+                    }
                     drag_op = new_drag.or(drag_op);
                 }
             });
 
+            // Drag and drop re-order
             match drag_op {
-                Some(PassDrag::Started(pass_idx) | PassDrag::Dragging(pass_idx)) => {
+                Some(PassDrag::StartedOrDragging(pass_idx)) => {
                     if let Some(hp) = ui.ctx().pointer_interact_pos() {
-                        let insertion_idx = find_closest_y_center(hp.y, &ends);
-                        ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("pass_drag_line")))
-                            .rect_filled(ends[insertion_idx], 0.0, ui.visuals().selection.bg_fill);
+                        let insertion_idx = find_closest_y_center(hp.y, &drop_targets);
+                        let insertion_rect = drop_targets[insertion_idx].rect;
+                        ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("pass_drag_line")))
+                            .rect_filled(insertion_rect, 0.0, ui.visuals().selection.bg_fill);
 
                         egui::Area::new(egui::Id::new(&"pass_drag").with(pass_idx))
                             .order(egui::Order::Foreground)
@@ -424,13 +396,33 @@ impl RetroTexApp {
                             .interactable(false)
                             .fixed_pos(hp)
                             .show(ui.ctx(), | ui | {
-                                ui.label("Dragging...");
+                                self.tmp_str.clear();
+                                self.def.passes[pass_idx].write_name(&mut self.tmp_str, pass_idx).expect("Writing to a string should never fail");
+                                egui::Frame::new()
+                                    .fill(ui.visuals().window_fill())
+                                    .inner_margin(4.0)
+                                    .outer_margin(4.0)
+                                    .stroke(ui.visuals().window_stroke())
+                                    .show(ui, | ui | {
+                                        ui.label(egui::RichText::new(&self.tmp_str).strong());
+                                    });
                             });
+                        
+                        let clip = ui.clip_rect();
+                        let y_rel = (hp.y - clip.top()) / clip.height() - 0.5;
+                        let scroll_dir = -y_rel.signum();
+                        let scroll = ((y_rel.abs() + DRAG_SCROLL_PART - 0.5) / DRAG_SCROLL_PART).saturate() * scroll_dir;
+                        let scroll_speed = scroll * DRAG_SCROLL_SPEED_MAX;
+                        let dt = ui.ctx().input(| i | i.unstable_dt).max(0.05);
+                        ui.scroll_with_delta_animation(
+                            egui::Vec2::new(0.0, scroll_speed * dt),
+                            egui::style::ScrollAnimation::none()
+                        );
                     }
                 },
                 Some(PassDrag::Stopped(pass_idx)) => {
                     if let Some(hp) = ui.ctx().pointer_interact_pos() {
-                        let mut insertion_idx = find_closest_y_center(hp.y, &ends);
+                        let mut insertion_idx = find_closest_y_center(hp.y, &drop_targets);
                         if insertion_idx > pass_idx {
                             insertion_idx -= 1;
                         }
@@ -442,21 +434,9 @@ impl RetroTexApp {
                 None => {}
             }
 
-            match pass_op {
-                Some(PassOperation::Remove(idx)) => {
-                    self.def.passes.remove(idx);
-                }
-                Some(PassOperation::MoveUp(idx)) => {
-                    if idx > 0 {
-                        self.def.passes.swap(idx, idx - 1);
-                    }
-                }
-                Some(PassOperation::MoveDown(idx)) => {
-                    if idx < self.def.passes.len() - 1 {
-                        self.def.passes.swap(idx, idx + 1);
-                    }
-                },
-                None => {}
+            // Deletion
+            if let Some(idx) = remove {
+                self.def.passes.remove(idx);
             }
 
             if add_full_width(ui, Button::new("Add Pass")).clicked() {

@@ -1,4 +1,4 @@
-use std::{fmt::{Debug, Display}, hash::Hash};
+use std::{fmt::{Debug, Display, Write}, hash::Hash};
 
 use glam::{FloatExt, IVec3, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
@@ -454,6 +454,13 @@ impl TexturePass {
             ..Default::default()
         }
     }
+
+    pub fn write_name<T: Write>(&self, mut w: T, idx: usize) -> std::fmt::Result {
+        match &self.name {
+            Some(name) => write!(w, "{}", name),
+            None => write!(w, "Pass {}", idx),
+        }
+    }
     
     pub fn is_rect(&self) -> bool {
         self.coverage == Coverage::Rectangle
@@ -662,7 +669,6 @@ pub struct GeneratedSample {
 pub struct TextureDefinition {
     #[serde(skip)] // This will be the filename
     pub name: String,
-    pub background: EditableColor<false>,
     pub ao_settings: AOSettings,
     pub lighting_settings: LightingSettings,
     pub passes: Vec<TexturePass>,
@@ -674,7 +680,6 @@ impl TextureDefinition {
     pub fn demo(name: &str) -> Self {
         Self {
             name: name.to_string(),
-            background: Color::from_hex("#3E3E3EFF").unwrap().into(),
             ao_settings: AOSettings {
                 radius: 4,
                 strength: 50,
@@ -686,6 +691,11 @@ impl TextureDefinition {
                 impact: 50,
             },
             passes: vec![
+                TexturePass {
+                    name: Some("Background".to_string()),
+                    color: Color::from_hex("#3E3E3EFF").unwrap().into(),
+                    ..Default::default()
+                },
                 TexturePass {
                     name: Some("Rust".to_string()),
                     color: Color::from_hex("#70310054").unwrap().into(),
@@ -775,7 +785,7 @@ impl TextureDefinition {
 
     pub fn generate_pixel(&self, x: i32, y: i32) -> GeneratedSample {
         let mut ret = GeneratedSample {
-            albedo: self.background.color().to_linear().truncate(),
+            albedo: Vec3::ZERO,
             depth: 0.0,
         };
         for pass in &self.passes{
@@ -791,7 +801,6 @@ impl Default for TextureDefinition {
     fn default() -> Self {
         Self {
             name: DEFAULT_NAME.to_string(),
-            background: Color::new(0, 0, 0, 255).into(),
             ao_settings: AOSettings::default(),
             lighting_settings: LightingSettings::default(),
             passes: vec![],
