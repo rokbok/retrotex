@@ -3,6 +3,26 @@ use std::{hash::{DefaultHasher, Hash, Hasher}, str::FromStr};
 use glam::Vec2;
 use strum::VariantNames;
 
+use crate::IMG_SIZE;
+
+
+
+pub fn idx(x: i32, y: i32) -> usize {
+    (y * IMG_SIZE + x) as usize
+}
+
+pub fn idx_safe(x: i32, y: i32) -> usize {
+    let x = x.clamp(0, IMG_SIZE - 1);
+    let y = y.clamp(0, IMG_SIZE - 1);
+    idx(x, y)
+}
+
+pub fn idx2coords(index: usize) -> (i32, i32) {
+    let x = (index as i32) % IMG_SIZE;
+    let y = (index as i32) / IMG_SIZE;
+    (x, y)
+}
+
 pub fn single_hash<T: Hash>(t: &T) -> u64 {
     let mut hasher = DefaultHasher::new();
     t.hash(&mut hasher);

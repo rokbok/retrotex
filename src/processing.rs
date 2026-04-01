@@ -3,7 +3,8 @@ use std::iter::zip;
 use glam::{FloatExt, IVec2, Vec2, Vec3};
 use rayon::prelude::*;
 
-use crate::{IMG_PIXEL_COUNT, IMG_SIZE, definition::{AOSettings, LightingSettings}, idx, idx_safe, idx2coords};
+use crate::prelude::*;
+use crate::{IMG_PIXEL_COUNT, IMG_SIZE, definition::{AOSettings, LightingSettings}, idx2coords};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
@@ -124,7 +125,7 @@ impl Default for TextureLayers {
 }
 
 impl TextureLayers {
-    pub fn recalculate(&mut self, ao_settings: &AOSettings, light: &LightingSettings) {
+    pub fn recalculate_derived(&mut self, ao_settings: &AOSettings, light: &LightingSettings) {
         calculate_normals(&self.depth, &mut self.normal);
         calculate_ao(&self.depth, &mut self.ao, light.light_dir_vec3(), ao_settings);
         calculate_light(&self.albedo, &self.normal, &self.ao, &mut self.lit, light);

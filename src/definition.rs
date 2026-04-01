@@ -455,7 +455,7 @@ impl TexturePass {
         }
     }
 
-    pub fn write_name<T: Write>(&self, mut w: T, idx: usize) -> std::fmt::Result {
+    pub fn write_name<T: Write>(&self, w: &mut T, idx: usize) -> std::fmt::Result {
         match &self.name {
             Some(name) => write!(w, "{}", name),
             None => write!(w, "Pass {}", idx),
@@ -668,7 +668,6 @@ pub struct GeneratedSample {
 #[serde(default)]
 pub struct TextureDefinition {
     #[serde(skip)] // This will be the filename
-    pub name: String,
     pub ao_settings: AOSettings,
     pub lighting_settings: LightingSettings,
     pub passes: Vec<TexturePass>,
@@ -677,9 +676,8 @@ pub struct TextureDefinition {
 impl TextureDefinition {
     pub const VERSION: u32 = 1;
 
-    pub fn demo(name: &str) -> Self {
+    pub fn demo() -> Self {
         Self {
-            name: name.to_string(),
             ao_settings: AOSettings {
                 radius: 4,
                 strength: 50,
@@ -800,7 +798,6 @@ impl TextureDefinition {
 impl Default for TextureDefinition {
     fn default() -> Self {
         Self {
-            name: DEFAULT_NAME.to_string(),
             ao_settings: AOSettings::default(),
             lighting_settings: LightingSettings::default(),
             passes: vec![],

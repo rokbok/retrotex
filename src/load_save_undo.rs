@@ -1,70 +1,36 @@
 use std::{fs::File, io::{BufRead as _, BufReader, BufWriter, Read, Write as _}, path::Path};
+use egui::{Color32, ColorImage};
+use glam::FloatExt;
+use rayon::prelude::*;
 
-use crate::{IMG_PIXEL_COUNT, color::Color, definition::{self, TextureDefinition}};
+use crate::{IMG_PIXEL_COUNT, IMG_SIZE, TextureHandleSet, color::{self, Color}, definition::TextureDefinition, processing::TextureLayers, util::idx2coords};
 
 const FILE_LOCATION: &str = "textures";
 const UNDO_LIMIT: usize = 1000;
 
-use glam::FloatExt;
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
 
-pub struct LoadSaveUndo {
-    loaded: Option<String>,
+
+const PREVIEW_TEX_OPTIONS: egui::TextureOptions = egui::TextureOptions {
+    magnification: egui::TextureFilter::Nearest,
+    minification: egui::TextureFilter::Nearest,
+    wrap_mode: egui::TextureWrapMode::ClampToEdge,
+    mipmap_mode: None,
+};
+
+#[derive(Debug)]
+pub struct UndoStack {
     undo_stack: Vec<String>,
     redo_index: usize,
 }
 
-impl LoadSaveUndo {
+impl UndoStack {
     pub fn new() -> Self {
-        Self {
-            loaded: None,
-            undo_stack: Vec::new(),
-            redo_index: 0,
-        }
+        Self { undo_stack: Vec::new(), redo_index: 0 }
     }
 
-    pub fn load_by_name_or_create(&mut self, name: &str) -> TextureDefinition {
-        match self.load_by_name(name) {
-            Ok(def) => {
-                info!("Loaded texture definition: {}", def.name);
-                def
-            },
-            Err(e) => {
-                warn!("Failed to load texture definition, creating default: {}", e);
-                let def = TextureDefinition::demo(name);
-                self.loaded = Some(name.to_string());
-                self.save(&def).expect("Failed to save default texture definition");
-                def
-            },
-        }
-    }
-
-    pub fn load_by_name(&mut self, name: &str) -> Result<definition::TextureDefinition, String> {
-        let path = Path::new(FILE_LOCATION).join(format!("{}.json", name));
-        let mut reader = BufReader::new(File::open(&path).map_err(|e| format!("Failed to open file: {}", e))?);
-        let mut buffer = String::new();
-        reader.read_line(&mut buffer).map_err(|e| format!("Failed to read file: {}", e))?;
-        let version = buffer.trim().parse::<u32>().map_err(|e| format!("Failed to parse version: {}", e))?;
-        if version != TextureDefinition::VERSION {
-            return Err(format!("Unsupported version: {}, expected {}", version, TextureDefinition::VERSION));
-        }
-        
-        buffer.clear();
-        reader.read_to_string(&mut buffer).map_err(|e| format!("Failed to read file: {}", e))?;
-        let mut ret:  TextureDefinition = serde_json::from_str(&buffer).map_err(|e| format!("Failed to parse JSON: {}", e))?;
-        ret.name = name.to_string();
-        self.loaded = Some(name.to_string());
-        self.undo_stack.clear();
-        self.undo_stack.push(buffer);
-        self.redo_index = 1;
-        Ok(ret)
-    }
-
-    pub fn save(&mut self, def: &TextureDefinition) -> Result<(), String> {
-        assert!(self.loaded.as_ref().map(| ld | *ld == def.name).unwrap_or(false));
-
-        let json_content = serde_json::to_string(def).map_err(|e| format!("Failed to serialize to JSON: {}", e))?;
+    pub fn push(&mut self, json_content: String) {
         if self.redo_index < self.undo_stack.len() {
             self.undo_stack.truncate(self.redo_index);
         }
@@ -74,26 +40,16 @@ impl LoadSaveUndo {
             self.undo_stack.remove(0);
             self.redo_index -= 1;
         }
-
-        let path = Path::new(FILE_LOCATION).join(format!("{}.json", def.name));
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
-        }
-        let mut writer = BufWriter::new(File::create(&path).map_err(|e| format!("Failed to create file: {}", e))?);
-        writer.write_all(format!("{}\n", TextureDefinition::VERSION).as_bytes()).map_err(|e| format!("Failed to write file: {}", e))?;
-        writer.write_all(self.undo_stack.last().unwrap().as_bytes()).map_err(|e| format!("Failed to write file: {}", e))?;
-        Ok(())
     }
-
+    
     pub fn undo(&mut self) -> Option<TextureDefinition> {
         if self.redo_index <= 1 {
             return None;
         }
         self.redo_index -= 1;
         let last_content = self.undo_stack[self.redo_index - 1].as_str();
-        let mut ret: TextureDefinition = serde_json::from_str(last_content).ok().expect("How did we get invalid JSON in the undo stack?");
-        ret.name = self.loaded.as_ref().unwrap().to_string();
-        Some(ret)
+        let d: TextureDefinition = serde_json::from_str(last_content).ok().expect("How did we get invalid JSON in the undo stack?");
+        Some(d)
     }
     
     pub fn redo(&mut self) -> Option<TextureDefinition> {
@@ -101,112 +57,323 @@ impl LoadSaveUndo {
             return None;
         }
         let last_content = self.undo_stack[self.redo_index].as_str();
-        let mut ret: TextureDefinition = serde_json::from_str(last_content).ok().expect("How did we get invalid JSON in the undo stack?");
-        ret.name = self.loaded.as_ref().unwrap().to_string();
+        let d: TextureDefinition = serde_json::from_str(last_content).ok().expect("How did we get invalid JSON in the undo stack?");
         self.redo_index += 1;
-        Some(ret)
+        Some(d)
     }
 }
 
+pub struct DefinitionFile {
+    id: u128,
+    name: String,
+    def: TextureDefinition,
+    hash: u64,
+    saved_hash: u64,
+    layers: TextureLayers,
+    layers_hash: u64,
+    images: Option<TextureHandleSet>,
+    image_hash: u64,
+    undo: UndoStack,
+}
 
-pub fn write_images(data: &crate::processing::TextureLayers, out_dir: &str, name: &str) -> Result<(), String> {
-    let dir = Path::new(out_dir);
-    std::fs::create_dir_all(dir).map_err(|e| format!("Failed to create output directory: {}", e))?;
-
-    let mut buf = vec![0u8; crate::IMG_PIXEL_COUNT * 3];
-
-    // Albedo
-    {
-        let albedo_path = dir.join(format!("{}_albedo.png", name));
-        info!("Writing albedo image to {}", albedo_path.display());
-        let file = File::create(albedo_path).map_err(|e| format!("Failed to create albedo image file: {}", e))?;
-        let mut encoder = png::Encoder::new(BufWriter::new(file), crate::IMG_SIZE as u32, crate::IMG_SIZE as u32);
-        encoder.set_color(png::ColorType::Rgb);
-        encoder.set_depth(png::BitDepth::Eight);
-        encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
-
-        let mut writer = encoder.write_header().map_err(|e| format!("Failed to write PNG header: {}", e))?;
-        for (i, sample) in data.albedo.iter().enumerate() {
-            let c = Color::from_linear(sample.extend(1.0));
-            buf[i * 3..i *  3 + 3].copy_from_slice(c.rgba[..3].as_ref());
-        }
-        writer.write_image_data(&buf[..(3 * IMG_PIXEL_COUNT)]).map_err(|e| format!("Failed to write PNG data: {}", e))?;
-        writer.finish().map_err(|e| format!("Failed to finish PNG writing: {}", e))?;
+impl DefinitionFile {
+    pub fn new(name: String) -> Self {
+        Self::new_with_def(name, TextureDefinition::default())
     }
 
-    // Depth
-    {
-        let depth_path = dir.join(format!("{}_depth.png", name));
-        info!("Writing depth image to {}", depth_path.display());
-        let file = File::create(depth_path).map_err(|e| format!("Failed to create depth image file: {}", e))?;
-        let mut encoder = png::Encoder::new(BufWriter::new(file), crate::IMG_SIZE as u32, crate::IMG_SIZE as u32);
-        encoder.set_color(png::ColorType::Grayscale);
-        encoder.set_depth(png::BitDepth::Sixteen);
-        // encoder.set_source_gamma(ScaledFloat::new(1.0));
-
-        let mut writer = encoder.write_header().map_err(|e| format!("Failed to write PNG header: {}", e))?;
-        for (i, sample) in data.depth.iter().enumerate() {
-            let enc = (sample + 64.0).mul_add(512.0, 0.5) as u16;
-            buf[(i * 2)..(i * 2 + 2)].copy_from_slice(&enc.to_be_bytes());
-        }
-        writer.write_image_data(&buf[..(IMG_PIXEL_COUNT * 2)]).map_err(|e| format!("Failed to write PNG data: {}", e))?;
-        writer.finish().map_err(|e| format!("Failed to finish PNG writing: {}", e))?;
+    pub fn new_with_def(name: String, def: TextureDefinition) -> Self {
+        Self::new_with_def_and_id(name, def, rand::random(), false)
     }
 
-    // Normal
-    {
-        let normal_path = dir.join(format!("{}_normal.png", name));
-        info!("Writing normal image to {}", normal_path.display());
-        let file = File::create(normal_path).map_err(|e| format!("Failed to create normal image file: {}", e))?;
-        let mut encoder = png::Encoder::new(BufWriter::new(file), crate::IMG_SIZE as u32, crate::IMG_SIZE as u32);
-        encoder.set_color(png::ColorType::Rgb);
-        encoder.set_depth(png::BitDepth::Eight);
-
-        let mut writer = encoder.write_header().map_err(|e| format!("Failed to write PNG header: {}", e))?;
-        for (i, sample) in data.normal.iter().enumerate() {
-            buf[i * 3 + 0] = sample.x.mul_add(0.5, 0.5).saturate().mul_add(255.0, 0.5) as u8;
-            buf[i * 3 + 1] = sample.y.mul_add(0.5, 0.5).saturate().mul_add(255.0, 0.5) as u8;
-            buf[i * 3 + 2] = sample.z.mul_add(0.5, 0.5).saturate().mul_add(255.0, 0.5) as u8;
-        }
-        writer.write_image_data(&buf[..(3 * IMG_PIXEL_COUNT)]).map_err(|e| format!("Failed to write PNG data: {}", e))?;
-        writer.finish().map_err(|e| format!("Failed to finish PNG writing: {}", e))?;
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
-    // AO
-    {
-        let ao_path = dir.join(format!("{}_ao.png", name));
-        info!("Writing AO image to {}", ao_path.display());
-        let file = File::create(ao_path).map_err(|e| format!("Failed to create AO image file: {}", e))?;
-        let mut encoder = png::Encoder::new(BufWriter::new(file), crate::IMG_SIZE as u32, crate::IMG_SIZE as u32);
-        encoder.set_color(png::ColorType::Grayscale);
-        encoder.set_depth(png::BitDepth::Eight);
-
-        let mut writer = encoder.write_header().map_err(|e| format!("Failed to write PNG header: {}", e))?;
-        for (i, sample) in data.ao.iter().enumerate() {
-            buf[i] = sample.mul_add(255.0, 0.5) as u8;
+    fn new_with_def_and_id(name: String, def: TextureDefinition, id: u128, is_saved: bool) -> Self {
+        let hash = crate::util::single_hash(&def);
+        Self {
+            id,
+            name,
+            def,
+            hash,
+            saved_hash: if is_saved { hash } else { 0 },
+            layers: TextureLayers::default(),
+            layers_hash: 0,
+            images: None,
+            image_hash: 0,
+            undo: UndoStack::new(),
         }
-        writer.write_image_data(&buf[..IMG_PIXEL_COUNT]).map_err(|e| format!("Failed to write PNG data: {}", e))?;
-        writer.finish().map_err(|e| format!("Failed to finish PNG writing: {}", e))?;
     }
 
-    // Lit
-    {
-        let lit_path = dir.join(format!("{}.png", name));
-        info!("Writing lit image to {}", lit_path.display());
-        let file = File::create(lit_path).map_err(|e| format!("Failed to create lit image file: {}", e))?;
-        let mut encoder = png::Encoder::new(BufWriter::new(file), crate::IMG_SIZE as u32, crate::IMG_SIZE as u32);
-        encoder.set_color(png::ColorType::Rgb);
-        encoder.set_depth(png::BitDepth::Eight);
-        encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
-
-        let mut writer = encoder.write_header().map_err(|e| format!("Failed to write PNG header: {}", e))?;
-        for (i, sample) in data.lit.iter().enumerate() {
-            let c = Color::from_linear(sample.extend(1.0));
-            buf[i * 3..i *  3 + 3].copy_from_slice(c.rgba[..3].as_ref());
-        }
-        writer.write_image_data(&buf[..(3 * IMG_PIXEL_COUNT)]).map_err(|e| format!("Failed to write PNG data: {}", e))?;
-        writer.finish().map_err(|e| format!("Failed to finish PNG writing: {}", e))?;
+    pub fn def(&self) -> &TextureDefinition {
+        &self.def
     }
 
-    Ok(())
+    pub(crate) fn modify_definition<F: FnOnce(&mut TextureDefinition, &TextureHandleSet, &TextureLayers, &str)>(&mut self, ctx: &egui::Context, change_fn: F) -> bool {
+        if self.images.is_none() {
+            self.update_images(ctx);
+        }
+        change_fn(&mut self.def, &self.images.as_ref().unwrap(), &self.layers, &self.name);
+        let prev_hash = self.hash;
+        self.hash = crate::util::single_hash(&self.def);
+        prev_hash != self.hash
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.hash != self.saved_hash
+    }
+
+    pub fn load_by_name_or_create(name: &str) -> Self {
+        match Self::load_by_name(name) {
+            Ok(def) => {
+                info!("Loaded texture definition: {}", def.name);
+                def
+            },
+            Err(e) => {
+                warn!("Failed to load texture definition, creating default: {}", e);
+                let def = TextureDefinition::demo();
+                let mut ret = Self::new_with_def(name.to_string(), def);
+                ret.save().expect("Failed to save default texture definition");
+                ret
+            },
+        }
+    }
+
+    pub fn load_by_name(name: &str) -> Result<Self, String> {
+        let path = Path::new(FILE_LOCATION).join(format!("{}.rtex", name));
+        let mut reader = BufReader::new(File::open(&path).map_err(|e| format!("Failed to open file: {}", e))?);
+        let mut buffer = String::new();
+        reader.read_line(&mut buffer).map_err(|e| format!("Failed to read file: {}", e))?;
+        let magic = buffer.trim();
+        if magic != "RETROTEX" {
+            return Err(format!("Invalid file format: missing magic header"));
+        }
+
+        buffer.clear();
+        reader.read_line(&mut buffer).map_err(|e| format!("Failed to read file: {}", e))?;
+        let version = buffer.trim().parse::<u32>().map_err(|e| format!("Failed to parse version: {}", e))?;
+        if version != TextureDefinition::VERSION {
+            return Err(format!("Unsupported version: {}, expected {}", version, TextureDefinition::VERSION));
+        }
+
+        buffer.clear();
+        reader.read_line(&mut buffer).map_err(|e| format!("Failed to read file: {}", e))?;
+        let id = buffer.trim().parse::<u128>().map_err(|e| format!("Failed to parse hash: {}", e))?;
+        
+        buffer.clear();
+        reader.read_to_string(&mut buffer).map_err(|e| format!("Failed to read file: {}", e))?;
+        let def: TextureDefinition = serde_json::from_str(&buffer).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        let mut ret = Self::new_with_def_and_id(name.to_string(), def, id, true);
+        ret.saved_hash = ret.hash;
+        Ok(ret)
+    }
+
+    pub fn save(&mut self) -> Result<(), String> {
+
+        let json_content = serde_json::to_string(&self.def).map_err(|e| format!("Failed to serialize to JSON: {}", e))?;
+
+        let path = Path::new(FILE_LOCATION).join(format!("{}.rtex", self.name));
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
+        }
+        let mut writer = BufWriter::new(File::create(&path).map_err(|e| format!("Failed to create file: {}", e))?);
+        writer.write_all(b"RETROTEX\n").map_err(|e| format!("Failed to write file: {}", e))?;
+        writer.write_all(format!("{}\n", TextureDefinition::VERSION).as_bytes()).map_err(|e| format!("Failed to write file: {}", e))?;
+        writer.write_all(format!("{}\n", self.id).as_bytes()).map_err(|e| format!("Failed to write file: {}", e))?;
+        writer.write_all(json_content.as_bytes()).map_err(|e| format!("Failed to write file: {}", e))?;
+
+        self.undo.push(json_content);
+
+        self.saved_hash = self.hash;
+
+        Ok(())
+    }
+
+    pub fn redo(&mut self) {
+        if let Some(def) = self.undo.redo() {
+            self.def = def;
+            self.hash = crate::util::single_hash(&self.def);
+        }
+    }
+
+    pub fn undo(&mut self) {
+        if let Some(def) = self.undo.undo() {
+            self.def = def;
+            self.hash = crate::util::single_hash(&self.def);
+        }
+    }
+
+    pub fn update_layers(&mut self) -> &TextureLayers {
+        if self.layers_hash != self.hash {
+            self.layers.albedo.par_iter_mut()
+                .zip(self.layers.depth.par_iter_mut())
+                .enumerate()
+                .for_each(|(i, (albedo_layer, depth_layer))| {
+                    let (x, y) = idx2coords(i);
+                    let s = self.def.generate_pixel(x, y);
+                    *albedo_layer = s.albedo;
+                    
+                    *depth_layer = s.depth;
+                });
+            self.layers.recalculate_derived(&self.def.ao_settings, &self.def.lighting_settings);
+        }
+        &self.layers
+    }
+
+    pub(crate) fn update_images(&mut self, ctx: &egui::Context) -> &TextureHandleSet {
+        if self.images.is_none() || self.image_hash != self.hash {
+            self.update_layers();
+
+            let mut albedo_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
+            let mut depth_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
+            let mut normal_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
+            let mut ao_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
+            let mut lit_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
+
+            albedo_img.pixels.par_iter_mut()
+                .zip(depth_img.pixels.par_iter_mut())
+                .zip(normal_img.pixels.par_iter_mut())
+                .zip(ao_img.pixels.par_iter_mut())
+                .zip(lit_img.pixels.par_iter_mut())
+                .enumerate()
+                .for_each(|(index, ((((albedo_px, depth_px), normal_px), ao_px), lit_px))| {
+                    let a = self.layers.albedo[index];
+                    *albedo_px = color::Color::from_linear(a.extend(1.0)).into();
+                    
+                    let d = (self.layers.depth[index] + 128.0).round().clamp(0.0, 255.0) as u8;
+                    *depth_px = egui::Rgba::from_srgba_unmultiplied(d, d, d, 255).into();
+
+                    let n = self.layers.normal[index];
+                    *normal_px = egui::Rgba::from_rgba_unmultiplied(n.x.mul_add(0.5, 0.5).saturate(), n.y.mul_add(0.5, 0.5).saturate(), n.z.saturate(), 1.0).into();
+
+                    let ao = self.layers.ao[index];
+                    *ao_px = egui::Rgba::from_srgba_unmultiplied((ao * 255.0) as u8, (ao * 255.0) as u8, (ao * 255.0) as u8, 255).into();
+
+                    let lit = self.layers.lit[index];
+                    *lit_px = color::Color::from_linear(lit.extend(1.0)).into();
+                });
+
+            if let Some(tex) = &mut self.images {
+                tex.albedo.set(albedo_img, PREVIEW_TEX_OPTIONS);
+                tex.depth.set(depth_img, PREVIEW_TEX_OPTIONS);
+                tex.normal.set(normal_img, PREVIEW_TEX_OPTIONS);
+                tex.ao.set(ao_img, PREVIEW_TEX_OPTIONS);
+                tex.lit.set(lit_img, PREVIEW_TEX_OPTIONS);
+                // Data already was written into the correct place
+            } else {
+                self.images = Some(TextureHandleSet {
+                    albedo: ctx.load_texture("preview_albedo", albedo_img, PREVIEW_TEX_OPTIONS),
+                    depth: ctx.load_texture("preview_depth", depth_img, PREVIEW_TEX_OPTIONS),
+                    normal: ctx.load_texture("preview_normal", normal_img, PREVIEW_TEX_OPTIONS),
+                    ao: ctx.load_texture("preview_ao", ao_img, PREVIEW_TEX_OPTIONS),
+                    lit: ctx.load_texture("preview_lit", lit_img, PREVIEW_TEX_OPTIONS),
+                });
+            }
+            self.image_hash = self.hash;
+        }
+
+        self.images.as_ref().unwrap()
+    }
+
+    pub fn write_images(&self, out_dir: &str) -> Result<(), String> {
+        let dir = Path::new(out_dir);
+        std::fs::create_dir_all(dir).map_err(|e| format!("Failed to create output directory: {}", e))?;
+
+        let mut buf = vec![0u8; crate::IMG_PIXEL_COUNT * 3];
+
+        // Albedo
+        {
+            let albedo_path = dir.join(format!("{}_albedo.png", self.name));
+            info!("Writing albedo image to {}", albedo_path.display());
+            let file = File::create(albedo_path).map_err(|e| format!("Failed to create albedo image file: {}", e))?;
+            let mut encoder = png::Encoder::new(BufWriter::new(file), crate::IMG_SIZE as u32, crate::IMG_SIZE as u32);
+            encoder.set_color(png::ColorType::Rgb);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
+
+            let mut writer = encoder.write_header().map_err(|e| format!("Failed to write PNG header: {}", e))?;
+            for (i, sample) in self.layers.albedo.iter().enumerate() {
+                let c = Color::from_linear(sample.extend(1.0));
+                buf[i * 3..i *  3 + 3].copy_from_slice(c.rgba[..3].as_ref());
+            }
+            writer.write_image_data(&buf[..(3 * IMG_PIXEL_COUNT)]).map_err(|e| format!("Failed to write PNG data: {}", e))?;
+            writer.finish().map_err(|e| format!("Failed to finish PNG writing: {}", e))?;
+        }
+
+        // Depth
+        {
+            let depth_path = dir.join(format!("{}_depth.png", self.name));
+            info!("Writing depth image to {}", depth_path.display());
+            let file = File::create(depth_path).map_err(|e| format!("Failed to create depth image file: {}", e))?;
+            let mut encoder = png::Encoder::new(BufWriter::new(file), crate::IMG_SIZE as u32, crate::IMG_SIZE as u32);
+            encoder.set_color(png::ColorType::Grayscale);
+            encoder.set_depth(png::BitDepth::Sixteen);
+            // encoder.set_source_gamma(ScaledFloat::new(1.0));
+
+            let mut writer = encoder.write_header().map_err(|e| format!("Failed to write PNG header: {}", e))?;
+            for (i, sample) in self.layers.depth.iter().enumerate() {
+                let enc = (sample + 64.0).mul_add(512.0, 0.5) as u16;
+                buf[(i * 2)..(i * 2 + 2)].copy_from_slice(&enc.to_be_bytes());
+            }
+            writer.write_image_data(&buf[..(IMG_PIXEL_COUNT * 2)]).map_err(|e| format!("Failed to write PNG data: {}", e))?;
+            writer.finish().map_err(|e| format!("Failed to finish PNG writing: {}", e))?;
+        }
+
+        // Normal
+        {
+            let normal_path = dir.join(format!("{}_normal.png", self.name));
+            info!("Writing normal image to {}", normal_path.display());
+            let file = File::create(normal_path).map_err(|e| format!("Failed to create normal image file: {}", e))?;
+            let mut encoder = png::Encoder::new(BufWriter::new(file), crate::IMG_SIZE as u32, crate::IMG_SIZE as u32);
+            encoder.set_color(png::ColorType::Rgb);
+            encoder.set_depth(png::BitDepth::Eight);
+
+            let mut writer = encoder.write_header().map_err(|e| format!("Failed to write PNG header: {}", e))?;
+            for (i, sample) in self.layers.normal.iter().enumerate() {
+                buf[i * 3 + 0] = sample.x.mul_add(0.5, 0.5).saturate().mul_add(255.0, 0.5) as u8;
+                buf[i * 3 + 1] = sample.y.mul_add(0.5, 0.5).saturate().mul_add(255.0, 0.5) as u8;
+                buf[i * 3 + 2] = sample.z.mul_add(0.5, 0.5).saturate().mul_add(255.0, 0.5) as u8;
+            }
+            writer.write_image_data(&buf[..(3 * IMG_PIXEL_COUNT)]).map_err(|e| format!("Failed to write PNG data: {}", e))?;
+            writer.finish().map_err(|e| format!("Failed to finish PNG writing: {}", e))?;
+        }
+
+        // AO
+        {
+            let ao_path = dir.join(format!("{}_ao.png", self.name));
+            info!("Writing AO image to {}", ao_path.display());
+            let file = File::create(ao_path).map_err(|e| format!("Failed to create AO image file: {}", e))?;
+            let mut encoder = png::Encoder::new(BufWriter::new(file), crate::IMG_SIZE as u32, crate::IMG_SIZE as u32);
+            encoder.set_color(png::ColorType::Grayscale);
+            encoder.set_depth(png::BitDepth::Eight);
+
+            let mut writer = encoder.write_header().map_err(|e| format!("Failed to write PNG header: {}", e))?;
+            for (i, sample) in self.layers.ao.iter().enumerate() {
+                buf[i] = sample.mul_add(255.0, 0.5) as u8;
+            }
+            writer.write_image_data(&buf[..IMG_PIXEL_COUNT]).map_err(|e| format!("Failed to write PNG data: {}", e))?;
+            writer.finish().map_err(|e| format!("Failed to finish PNG writing: {}", e))?;
+        }
+
+        // Lit
+        {
+            let lit_path = dir.join(format!("{}.png", self.name));
+            info!("Writing lit image to {}", lit_path.display());
+            let file = File::create(lit_path).map_err(|e| format!("Failed to create lit image file: {}", e))?;
+            let mut encoder = png::Encoder::new(BufWriter::new(file), crate::IMG_SIZE as u32, crate::IMG_SIZE as u32);
+            encoder.set_color(png::ColorType::Rgb);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
+
+            let mut writer = encoder.write_header().map_err(|e| format!("Failed to write PNG header: {}", e))?;
+            for (i, sample) in self.layers.lit.iter().enumerate() {
+                let c = Color::from_linear(sample.extend(1.0));
+                buf[i * 3..i *  3 + 3].copy_from_slice(c.rgba[..3].as_ref());
+            }
+            writer.write_image_data(&buf[..(3 * IMG_PIXEL_COUNT)]).map_err(|e| format!("Failed to write PNG data: {}", e))?;
+            writer.finish().map_err(|e| format!("Failed to finish PNG writing: {}", e))?;
+        }
+
+        Ok(())
+    }
 }

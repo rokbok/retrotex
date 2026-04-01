@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use egui::{Color32, Stroke};
 
-use crate::{DisplayMode, IMG_SIZE, RetroTexApp, definition::{Coverage, Pattern, TexturePass}, idx, util::add_enum_dropdown};
+use crate::{DisplayMode, IMG_SIZE, TextureHandleSet, UiData, definition::{Coverage, Pattern, TextureDefinition, TexturePass}, processing::TextureLayers, util::{add_enum_dropdown, idx}};
 
 
 #[allow(unused_imports)]
@@ -431,77 +431,75 @@ impl TexturePass {
     }
 }
 
-impl RetroTexApp {
-    pub fn add_preview(&mut self, ui: &mut egui::Ui) {
+impl TextureDefinition {
+    pub(crate) fn add_preview(&mut self, ui: &mut egui::Ui, ui_data: &mut UiData, textures: &TextureHandleSet, layers: &TextureLayers, tmp_str: &mut String) {
         ui.horizontal(| ui | {
             ui.label("Display Mode:");
-            add_enum_dropdown(ui, &mut self.display_settings.mode, "display_mode", 0, false);
+            add_enum_dropdown(ui, &mut ui_data.display_mode, "display_mode", 0, false);
         });
-        self.textures.as_ref().expect("Texture not initialized yet?");
-        if let Some(tex) = &self.textures {
-            ui.centered_and_justified(| ui | {
-                let available = ui.available_rect_before_wrap();
-                let sense = egui::Sense::hover() | egui::Sense::drag();
-                let pointer_response = ui.interact(available, ui.id().with("preview_drag"), sense);
-                if pointer_response.drag_stopped_by(egui::PointerButton::Primary) {
-                    self.drag = OngoingDrag::None;
-                }
+        
+        ui.centered_and_justified(| ui | {
+            let available = ui.available_rect_before_wrap();
+            let sense = egui::Sense::hover() | egui::Sense::drag();
+            let pointer_response = ui.interact(available, ui.id().with("preview_drag"), sense);
+            if pointer_response.drag_stopped_by(egui::PointerButton::Primary) {
+                ui_data.drag = OngoingDrag::None;
+            }
 
-                let image_scale = (available.width().min(available.height()) / IMG_SIZE as f32).floor().max(1.0) as i32;
-                let image_size_sc = IMG_SIZE as f32 * image_scale as f32;
-                let image_size = egui::Vec2::new(image_size_sc, image_size_sc);
-                let image_rect = egui::Rect::from_center_size(available.center(), image_size);
-                
-                let tex = match self.display_settings.mode {
-                    DisplayMode::Lit => &tex.lit,
-                    DisplayMode::Albedo => &tex.albedo,
-                    DisplayMode::Depth => &tex.depth,
-                    DisplayMode::Normal => &tex.normal,
-                    DisplayMode::AmbientOcclusion => &tex.ao,
-                };
+            let image_scale = (available.width().min(available.height()) / IMG_SIZE as f32).floor().max(1.0) as i32;
+            let image_size_sc = IMG_SIZE as f32 * image_scale as f32;
+            let image_size = egui::Vec2::new(image_size_sc, image_size_sc);
+            let image_rect = egui::Rect::from_center_size(available.center(), image_size);
+            
+            let tex = match ui_data.display_mode {
+                DisplayMode::Lit => &textures.lit,
+                DisplayMode::Albedo => &textures.albedo,
+                DisplayMode::Depth => &textures.depth,
+                DisplayMode::Normal => &textures.normal,
+                DisplayMode::AmbientOcclusion => &textures.ao,
+            };
 
-                let img = egui::Image::new(tex)
-                    .fit_to_exact_size(image_size)
-                    .sense(egui::Sense::hover());
-                img.paint_at(ui, image_rect);
+            let img = egui::Image::new(tex)
+                .fit_to_exact_size(image_size)
+                .sense(egui::Sense::hover());
+            img.paint_at(ui, image_rect);
 
-                if let Some(pass_idx) = self.preview_editing {
-                    if pass_idx >= self.def.passes.len() {
-                        self.preview_editing = None;
-                    } else {
-                        match self.def.passes[pass_idx].coverage {
-                            Coverage::Rectangle => self.def.passes[pass_idx].rect_gizmos(&mut self.drag, ui, &pointer_response, image_rect, image_scale),
-                            Coverage::Pattern => self.def.passes[pass_idx].pattern_gizmos(&mut self.drag, ui, &pointer_response, image_rect, image_scale),
-                            _ => {},
-                        }
-                    }
-                };
-
-                if pointer_response.hovered() {
-                    if let Some(hover_pos) = pointer_response.hover_pos() {
-                        let x = ((hover_pos.x - image_rect.min.x) / image_scale as f32).floor() as i32;
-                        let y = ((hover_pos.y - image_rect.min.y) / image_scale as f32).floor() as i32;
-                        if x >= 0 && x < IMG_SIZE && y >= 0 && y < IMG_SIZE {
-                            pointer_response.on_hover_ui_at_pointer(| ui | {
-                                self.tmp_str.clear();
-                                let index = idx(x, y);
-                                write!(self.tmp_str, "Pixel ({}, {})", x, y).unwrap();
-
-                                let albedo = self.layers.albedo[index];
-                                write!(self.tmp_str, "\nAlbedo: ({:.3}, {:.3}, {:.3})", albedo.x, albedo.y, albedo.z).unwrap();
-
-                                let depth = self.layers.depth[index];
-                                write!(self.tmp_str, "\nDepth: {:.3}", depth).unwrap();
-
-                                let normal = self.layers.normal[index];
-                                write!(self.tmp_str, "\nNormal: ({:.3}, {:.3}, {:.3})", normal.x, normal.y, normal.z).unwrap();
-
-                                ui.label(&self.tmp_str);
-                            });
-                        }
+            if let Some(pass_idx) = ui_data.preview_editing {
+                if pass_idx >= self.passes.len() {
+                    ui_data.preview_editing = None;
+                } else {
+                    match self.passes[pass_idx].coverage {
+                        Coverage::Rectangle => self.passes[pass_idx].rect_gizmos(&mut ui_data.drag, ui, &pointer_response, image_rect, image_scale),
+                        Coverage::Pattern => self.passes[pass_idx].pattern_gizmos(&mut ui_data.drag, ui, &pointer_response, image_rect, image_scale),
+                        _ => {},
                     }
                 }
-            });
-        }
+            };
+
+            if pointer_response.hovered() {
+                if let Some(hover_pos) = pointer_response.hover_pos() {
+                    let x = ((hover_pos.x - image_rect.min.x) / image_scale as f32).floor() as i32;
+                    let y = ((hover_pos.y - image_rect.min.y) / image_scale as f32).floor() as i32;
+                    if x >= 0 && x < IMG_SIZE && y >= 0 && y < IMG_SIZE {
+                        pointer_response.on_hover_ui_at_pointer(| ui | {
+                            tmp_str.clear();
+                            let index = idx(x, y);
+                            write!(tmp_str, "Pixel ({}, {})", x, y).unwrap();
+
+                            let albedo = layers.albedo[index];
+                            write!(tmp_str, "\nAlbedo: ({:.3}, {:.3}, {:.3})", albedo.x, albedo.y, albedo.z).unwrap();
+
+                            let depth = layers.depth[index];
+                            write!(tmp_str, "\nDepth: {:.3}", depth).unwrap();
+
+                            let normal = layers.normal[index];
+                            write!(tmp_str, "\nNormal: ({:.3}, {:.3}, {:.3})", normal.x, normal.y, normal.z).unwrap();
+
+                            ui.label(&*tmp_str);
+                        });
+                    }
+                }
+            }
+        });
     }
 }

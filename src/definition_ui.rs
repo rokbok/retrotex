@@ -2,7 +2,9 @@
 use egui::{Button, Checkbox, Image, TextEdit, include_image, text::{CCursor, CCursorRange}};
 use glam::FloatExt;
 use strum::{EnumCount, IntoEnumIterator};
-use crate::{IMG_SIZE, RetroTexApp, color::{Color, EditableColor}, definition::{NoiseType, TexturePass}, util::add_enum_dropdown};
+
+use crate::prelude::*;
+use crate::{UiData, color::{Color, EditableColor}, definition::{NoiseType, TextureDefinition, TexturePass}, util::add_enum_dropdown};
 
 #[allow(unused_imports)]
 use log::{debug, error, log_enabled, info, warn, trace};
@@ -115,9 +117,9 @@ fn find_closest_y_center(y: f32, rects: &[egui::Response]) -> usize {
     }
 }
 
-impl RetroTexApp {
-    fn pass_ui(&mut self, ui: &mut egui::Ui, pass_idx: usize, monospace_width: f32) -> (bool, Option<PassDrag>) {
-        let pass = &mut self.def.passes[pass_idx];
+impl TextureDefinition {
+    fn pass_ui(&mut self, ui: &mut egui::Ui, pass_idx: usize, ui_data: &mut UiData, monospace_width: f32, tmp_str: &mut String) -> (bool, Option<PassDrag>) {
+        let pass = &mut self.passes[pass_idx];
         let group = ui.group(| ui | {
             let mut remove = false;
             let mut pass_drag = Option::<PassDrag>::None;
@@ -136,23 +138,23 @@ impl RetroTexApp {
                     pass_drag = Some(PassDrag::Stopped(pass_idx));
                 }
                 ui.add(Checkbox::without_text(&mut pass.enabled)).on_hover_text("Enable or disable this pass");
-                self.tmp_str.clear();
-                pass.write_name(&mut self.tmp_str, pass_idx).expect("Writing to a string should never fail");
+                tmp_str.clear();
+                pass.write_name(tmp_str, pass_idx).expect("Writing to a string should never fail");
 
                 let aw = ui.available_width();
                 let tw = aw - isy - ui.spacing().item_spacing.x;
-                let name_response = ui.add_sized([tw, isy], egui::TextEdit::singleline(&mut self.tmp_str).hint_text("Pass Name"));
+                let name_response = ui.add_sized([tw, isy], egui::TextEdit::singleline(tmp_str).hint_text("Pass Name"));
                 if name_response.changed() {
                     match &mut pass.name {
                         Some(name) => {
                             name.clear();
-                            name.push_str(&self.tmp_str);
+                            name.push_str(tmp_str);
                         },
-                        None => pass.name = Some(self.tmp_str.clone()),
+                        None => pass.name = Some(tmp_str.clone()),
                     }
                 }
 
-                if self.tmp_str.is_empty() && !name_response.has_focus() {
+                if tmp_str.is_empty() && !name_response.has_focus() {
                     pass.name = None;
                 }
 
@@ -203,20 +205,20 @@ impl RetroTexApp {
                 let new_coverage = mode_selector(ui, &mut pass.coverage, "Shape");
                 if let Some(cov) = new_coverage {
                     if cov.is_gizmo_editable() {
-                        self.preview_editing = Some(pass_idx);
-                    } else if self.preview_editing == Some(pass_idx) {
-                        self.preview_editing = None;
+                        ui_data.preview_editing = Some(pass_idx);
+                    } else if ui_data.preview_editing == Some(pass_idx) {
+                        ui_data.preview_editing = None;
                     }
                 }
 
                 if pass.is_pattern() {
-                    let is_editing = self.preview_editing == Some(pass_idx);
+                    let is_editing = ui_data.preview_editing == Some(pass_idx);
                     if ui.add_sized([ui.available_width(), ui.spacing().interact_size.y],
                         Button::selectable(is_editing, if is_editing { "Editing Pattern..." } else { "Edit Pattern" })).clicked() {
                         if is_editing {
-                            self.preview_editing = None;
+                            ui_data.preview_editing = None;
                         } else {
-                            self.preview_editing = Some(pass_idx);
+                            ui_data.preview_editing = Some(pass_idx);
                         }
                     }
 
@@ -253,13 +255,13 @@ impl RetroTexApp {
                         ui.add(egui::DragValue::new(&mut pass.feature_y).range(-IMG_SIZE..=(IMG_SIZE - 1)).prefix("Y:"));
                         ui.add(egui::DragValue::new(&mut pass.rect.width).range(1..=(2 * IMG_SIZE - 1)).prefix("W:"));
                         ui.add(egui::DragValue::new(&mut pass.rect.height).range(1..=(2 * IMG_SIZE - 1)).prefix("H:"));
-                        let is_editing = self.preview_editing == Some(pass_idx);
+                        let is_editing = ui_data.preview_editing == Some(pass_idx);
                         let edit_button = egui::Button::selectable(is_editing, if is_editing { "Editing rect..." } else { "Edit rect" });
                         if ui.add_sized([ui.available_width(), ui.spacing().interact_size.y], edit_button).clicked() {
                             if is_editing {
-                                self.preview_editing = None;
+                                ui_data.preview_editing = None;
                             } else {
-                                self.preview_editing = Some(pass_idx);
+                                ui_data.preview_editing = Some(pass_idx);
                             }
                         }
                     });
@@ -336,7 +338,7 @@ impl RetroTexApp {
         group.inner
     }
         
-    pub fn definition_ui(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn definition_ui(&mut self, ui: &mut egui::Ui, ui_data: &mut UiData, name: &str, tmp_str: &mut String) {
         let monospace_id = egui::TextStyle::Monospace.resolve(ui.style());
 
         // Estimate width of one character (monospace assumption works best)
@@ -345,33 +347,33 @@ impl RetroTexApp {
         });
 
         egui::ScrollArea::vertical().show(ui, | ui | {
-            ui.heading(&self.def.name);
+            ui.heading(name);
             ui.horizontal(| ui | {
                 ui.label("Light direction:");
-                ui.add(egui::DragValue::new(&mut self.def.lighting_settings.direction[0]).range(-100..=100));
-                ui.add(egui::DragValue::new(&mut self.def.lighting_settings.direction[1]).range(-100..=100));
-                ui.add(egui::DragValue::new(&mut self.def.lighting_settings.direction[2]).range(1..=100));
+                ui.add(egui::DragValue::new(&mut self.lighting_settings.direction[0]).range(-100..=100));
+                ui.add(egui::DragValue::new(&mut self.lighting_settings.direction[1]).range(-100..=100));
+                ui.add(egui::DragValue::new(&mut self.lighting_settings.direction[2]).range(1..=100));
                 ui.label("Impact:");
-                ui.add(egui::DragValue::new(&mut self.def.lighting_settings.impact).range(0..=100)).on_hover_text("0 = unlit; 100 = maximum contrast");
+                ui.add(egui::DragValue::new(&mut self.lighting_settings.impact).range(0..=100)).on_hover_text("0 = unlit; 100 = maximum contrast");
             });
             ui.horizontal_wrapped( | ui | {
                 ui.label("Ambient occlusion:");
-                ui.add(egui::DragValue::new(&mut self.def.ao_settings.strength).range(0..=100)).on_hover_text("Ambient occlusion strength");
-                ui.add(egui::DragValue::new(&mut self.def.ao_settings.radius).range(1..=(IMG_SIZE - 1)).prefix("Radius:")).on_hover_text("Higher = more distant occluders will contribute to AO");
-                ui.add(egui::DragValue::new(&mut self.def.ao_settings.bias).range(0..=200).prefix("Bias:")).on_hover_text("Bias ambient occlusion based on light direction");
-            //    ui.checkbox(&mut self.def.ao_settings.ignore_surface_normal, "Ignore Surface Normal").on_hover_text("Experimental; Probably not something you want to use");
+                ui.add(egui::DragValue::new(&mut self.ao_settings.strength).range(0..=100)).on_hover_text("Ambient occlusion strength");
+                ui.add(egui::DragValue::new(&mut self.ao_settings.radius).range(1..=(IMG_SIZE - 1)).prefix("Radius:")).on_hover_text("Higher = more distant occluders will contribute to AO");
+                ui.add(egui::DragValue::new(&mut self.ao_settings.bias).range(0..=200).prefix("Bias:")).on_hover_text("Bias ambient occlusion based on light direction");
+            //    ui.checkbox(&mut self.ao_settings.ignore_surface_normal, "Ignore Surface Normal").on_hover_text("Experimental; Probably not something you want to use");
             });
             
         
             let mut drag_op = Option::<PassDrag>::None;
-            let mut drop_targets = Vec::<egui::Response>::with_capacity(self.def.passes.len() + 1);
+            let mut drop_targets = Vec::<egui::Response>::with_capacity(self.passes.len() + 1);
             let mut remove = Option::<usize>::None;
             let pass_gap = 4.0_f32;
             let (_, resp) = ui.allocate_exact_size(egui::Vec2::new(ui.available_width(), pass_gap), egui::Sense::empty());
             drop_targets.push(resp);
             ui.scope(| ui | {
-                for pass_idx in 0..self.def.passes.len() {
-                    let (remove_this, new_drag) = self.pass_ui(ui, pass_idx, monospace_width);
+                for pass_idx in 0..self.passes.len() {
+                    let (remove_this, new_drag) = self.pass_ui(ui, pass_idx, ui_data, monospace_width, tmp_str);
                     let (_, resp) = ui.allocate_exact_size(egui::Vec2::new(ui.available_width(), pass_gap), egui::Sense::empty());
                     drop_targets.push(resp);
                     if remove_this {
@@ -396,15 +398,15 @@ impl RetroTexApp {
                             .interactable(false)
                             .fixed_pos(hp)
                             .show(ui.ctx(), | ui | {
-                                self.tmp_str.clear();
-                                self.def.passes[pass_idx].write_name(&mut self.tmp_str, pass_idx).expect("Writing to a string should never fail");
                                 egui::Frame::new()
                                     .fill(ui.visuals().window_fill())
                                     .inner_margin(4.0)
                                     .outer_margin(4.0)
                                     .stroke(ui.visuals().window_stroke())
                                     .show(ui, | ui | {
-                                        ui.label(egui::RichText::new(&self.tmp_str).strong());
+                                        tmp_str.clear();
+                                        self.passes[pass_idx].write_name(tmp_str, pass_idx).expect("Writing to a string should never fail");
+                                        ui.label(egui::RichText::new(&*tmp_str).strong());
                                     });
                             });
                         
@@ -427,7 +429,7 @@ impl RetroTexApp {
                             insertion_idx -= 1;
                         }
                         if insertion_idx != pass_idx {
-                            self.def.passes.swap(insertion_idx, pass_idx);
+                            self.passes.swap(insertion_idx, pass_idx);
                         }
                     }
                 },
@@ -436,11 +438,11 @@ impl RetroTexApp {
 
             // Deletion
             if let Some(idx) = remove {
-                self.def.passes.remove(idx);
+                self.passes.remove(idx);
             }
 
             if add_full_width(ui, Button::new("Add Pass")).clicked() {
-                self.def.passes.push(TexturePass::new());
+                self.passes.push(TexturePass::new());
             }
         });
     }
