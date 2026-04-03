@@ -8,8 +8,6 @@ use crate::prelude::*;
 
 use crate::{color::{Color, EditableColor}, noise::{self, gaussian}, util};
 
-pub const DEFAULT_NAME: &str = "unnamed";
-
 #[allow(dead_code)]
 const SQRT2HALF: f32 = 0.70710678118654752440084436210485;
 

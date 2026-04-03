@@ -6,6 +6,7 @@ use rayon::prelude::*;
 use crate::prelude::*;
 use crate::{IMG_PIXEL_COUNT, TextureHandleSet, color::{self, Color}, definition::TextureDefinition, processing::TextureLayers};
 
+pub const DEFAULT_NAME: &str = "unnamed";
 pub const FILE_LOCATION: &str = "textures";
 pub const FILE_EXTENSION: &str = "rtex";
 const UNDO_LIMIT: usize = 1000;

@@ -82,21 +82,6 @@ impl FileRegistry {
         id
     }
 
-    pub fn rename(&mut self, id: u128, new_name: &str) -> Result<(), String> {
-        if let Some(existing_id) = self.id_by_name(new_name) {
-            if existing_id != id {
-                return Err(format!("Cannot rename: '{}' already exists", new_name));
-            }
-        }
-
-        let file = self
-            .files
-            .get(&id)
-            .ok_or_else(|| format!("Cannot rename: file id {} not found", id))?;
-
-        file.borrow_mut().rename(new_name)
-    }
-
     pub fn files_sorted(&self) -> Vec<(u128, String)> {
         let mut files = self
             .files

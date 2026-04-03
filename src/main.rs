@@ -10,6 +10,7 @@ use strum_macros::{AsRefStr, EnumString, VariantNames};
 
 use crate::prelude::*;
 use crate::file_ui::show_file_list_panel;
+use crate::settings::Settings;
 use crate::storage::FileRegistry;
 use crate::{definition::TextureDefinition, preview_ui::OngoingDrag};
 
@@ -24,6 +25,7 @@ pub mod color;
 pub mod processing;
 pub mod storage;
 pub mod file_ui;
+pub mod settings;
 
 pub const IMG_SIZE: i32 = 128;
 pub const IMG_PIXEL_COUNT: usize = IMG_SIZE as usize * IMG_SIZE as usize;
@@ -61,6 +63,7 @@ pub(crate) struct UiData {
 struct RetroTexApp {
     tmp_str: String,
     file_registry: FileRegistry,
+    settings: Settings,
     file_id: u128,
     last_unsaved_change: Instant,
     output_dir: String,
@@ -70,13 +73,21 @@ struct RetroTexApp {
 impl RetroTexApp {
     fn new(output_dir: String) -> Self {
         let mut file_registry = FileRegistry::read();
-        let file_id = file_registry
-            .id_by_name(definition::DEFAULT_NAME)
-            .unwrap_or_else(|| file_registry.create(definition::DEFAULT_NAME, TextureDefinition::demo()));
+        let mut settings = Settings::load();
+        let saved_file_id = settings.last_opened_id;
+        if !file_registry.file_by_id(saved_file_id).is_some() {
+            let id = file_registry
+                .id_by_name(file::DEFAULT_NAME)
+                .unwrap_or_else(|| file_registry.create(file::DEFAULT_NAME, TextureDefinition::demo()));
+            settings.last_opened_id = id;
+        }
+
+        let file_id = settings.last_opened_id;
 
         let ret = Self {
             tmp_str: String::new(),
             file_registry,
+            settings,
             file_id,
             last_unsaved_change: Instant::now(),
             output_dir,
@@ -103,13 +114,6 @@ impl eframe::App for RetroTexApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         show_file_list_panel(ctx, &self.file_registry, &mut self.file_id);
 
-        if let Some(new_name) = self.ui_data.rename_pending.take() {
-            match self.file_registry.rename(self.file_id, &new_name) {
-                Ok(()) => {}
-                Err(e) => error!("Failed to rename file: {}", e),
-            }
-        }
-
         let file_ref = self.file_registry
             .file_by_id(self.file_id)
             .expect("Active file id not found in registry");
@@ -129,29 +133,43 @@ impl eframe::App for RetroTexApp {
 
         ctx.set_pixels_per_point(1.5);
 
-        let (mut file, ui_data) = (file_ref.borrow_mut(), &mut self.ui_data);
-        file.update_images(ctx);
-        file.update_layers();
+        let changed = {
+            let (mut file, ui_data) = (file_ref.borrow_mut(), &mut self.ui_data);
+            file.update_images(ctx);
+            file.update_layers();
 
-        let changed = file.modify_definition(ctx, | def, images, layers, name | {
-            egui::SidePanel::right("right_panel")
-                .default_width(400.0)
-                .show(ctx, |ui| {
-                    def.definition_ui(ui, ui_data, name, &mut self.tmp_str);
+            file.modify_definition(ctx, | def, images, layers, name | {
+                egui::SidePanel::right("right_panel")
+                    .default_width(400.0)
+                    .show(ctx, |ui| {
+                        def.definition_ui(ui, ui_data, name, &mut self.tmp_str);
+                    });
+
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    def.add_preview(ui, ui_data, images, layers, &mut self.tmp_str);
                 });
+            })
+        };
+        
 
-            egui::CentralPanel::default().show(ctx, |ui| {
-                def.add_preview(ui, ui_data, images, layers, &mut self.tmp_str);
-            });
-        });
+        let mut file_name_changed = false;
+        if let Some(new_name) = self.ui_data.rename_pending.take() {
+            if let Err(e) = file_ref.borrow_mut().rename(&new_name) {
+                error!("Failed to rename file: {}", e);
+            } else {
+                file_name_changed = true;
+            }
+        }
 
         if changed {
+            let mut file = file_ref.borrow_mut();
             self.last_unsaved_change = Instant::now();
             file.update_images(ctx);
             file.update_layers();
         }
 
-        if file.is_dirty() {
+        if file_ref.borrow().is_dirty() || file_name_changed {
+            let mut file = file_ref.borrow_mut();
             ctx.request_repaint(); // Keep updating until we save
             if closing || self.last_unsaved_change.elapsed().as_millis() >= AUTO_SAVE_DELAY_MILLIS as u128 {
                 file.save().unwrap_or_else(|e| error!("Failed to save texture {}: {}", file.name(), e));
@@ -159,6 +177,9 @@ impl eframe::App for RetroTexApp {
                 assert!(!file.is_dirty(), "File should not be dirty after saving");
             }
         }
+        
+        self.settings.last_opened_id = self.file_id;
+        self.settings.save_if_changed();
     }
 }
 
