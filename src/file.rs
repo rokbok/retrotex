@@ -1,4 +1,4 @@
-use std::{fs::File, io::{BufRead as _, BufReader, BufWriter, Read, Write as _}, path::Path};
+use std::{fs::File, io::{BufRead as _, BufReader, BufWriter, Read, Write as _}, path::{Path, PathBuf}};
 use egui::{Color32, ColorImage};
 use glam::FloatExt;
 use rayon::prelude::*;
@@ -75,6 +75,10 @@ pub struct DefinitionFile {
 }
 
 impl DefinitionFile {
+    fn path_for_name(name: &str) -> PathBuf {
+        Path::new(FILE_LOCATION).join(format!("{}.{}", name, FILE_EXTENSION))
+    }
+
     pub fn new(name: String) -> Self {
         Self::new_with_def(name, TextureDefinition::default())
     }
@@ -142,7 +146,7 @@ impl DefinitionFile {
     }
 
     pub fn load_by_name(name: &str) -> Result<Self, String> {
-        let path = Path::new(FILE_LOCATION).join(format!("{}.{}", name, FILE_EXTENSION));
+        let path = Self::path_for_name(name);
         let mut reader = BufReader::new(File::open(&path).map_err(|e| format!("Failed to open file: {}", e))?);
         let mut buffer = String::new();
         reader.read_line(&mut buffer).map_err(|e| format!("Failed to read file: {}", e))?;
@@ -174,7 +178,7 @@ impl DefinitionFile {
 
         let json_content = serde_json::to_string(&self.def).map_err(|e| format!("Failed to serialize to JSON: {}", e))?;
 
-        let path = Path::new(FILE_LOCATION).join(format!("{}.{}", self.name, FILE_EXTENSION));
+        let path = Self::path_for_name(&self.name);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
         }
@@ -188,6 +192,31 @@ impl DefinitionFile {
 
         self.saved_hash = self.hash;
 
+        Ok(())
+    }
+
+    pub fn rename(&mut self, new_name: &str) -> Result<(), String> {
+        if new_name.is_empty() {
+            return Err("File name cannot be empty".to_string());
+        }
+
+        if self.name == new_name {
+            return Ok(());
+        }
+
+        let old_path = Self::path_for_name(&self.name);
+        let new_path = Self::path_for_name(new_name);
+
+        if new_path.exists() {
+            return Err(format!("Cannot rename: destination already exists: {}", new_path.display()));
+        }
+
+        if old_path.exists() {
+            std::fs::rename(&old_path, &new_path)
+                .map_err(|e| format!("Failed to rename file from {} to {}: {}", old_path.display(), new_path.display(), e))?;
+        }
+
+        self.name = new_name.to_string();
         Ok(())
     }
 

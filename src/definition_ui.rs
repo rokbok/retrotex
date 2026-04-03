@@ -1,4 +1,6 @@
 
+use std::fmt::Write as _;
+
 use egui::{Button, Checkbox, Image, TextEdit, include_image, text::{CCursor, CCursorRange}};
 use glam::FloatExt;
 use strum::{EnumCount, IntoEnumIterator};
@@ -112,6 +114,74 @@ fn find_closest_y_center(y: f32, rects: &[egui::Response]) -> usize {
     } else {
         last
     }
+}
+
+fn show_rename_dialog(ctx: &egui::Context, ui_data: &mut UiData, name: &str, tmp_str: &mut String) {
+    if !ui_data.rename_dialog_open {
+        return;
+    }
+
+    let just_opened = ui_data.rename_just_opened;
+    if just_opened {
+        ui_data.rename_input.clear();
+        ui_data.rename_input.push_str(name);
+        ui_data.rename_just_opened = false;
+    }
+
+    let mut open = ui_data.rename_dialog_open;
+    let mut close_after_action = false;
+    let mut do_save = false;
+
+    egui::Window::new("Rename File")
+        .id(egui::Id::new("rename_file_modal"))
+        .collapsible(false)
+        .resizable(false)
+        .fixed_size(egui::vec2(360.0, 120.0))
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            tmp_str.clear();
+            let _ = write!(tmp_str, "Rename file {} to", name);
+            ui.label(tmp_str.as_str());
+
+            let te_output = TextEdit::singleline(&mut ui_data.rename_input).show(ui);
+            if just_opened {
+                te_output.response.request_focus();
+            }
+            if te_output.response.gained_focus() {
+                let mut state = te_output.state;
+                let len = ui_data.rename_input.chars().count();
+                state.cursor.set_char_range(Some(CCursorRange::two(CCursor::new(0), CCursor::new(len))));
+                state.store(ctx, te_output.response.id);
+            }
+            if te_output.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                do_save = true;
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                close_after_action = true;
+            }
+
+            ui.separator();
+
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Save").clicked() || do_save {
+                        let new_name = ui_data.rename_input.trim();
+                        if new_name.is_empty() {
+                            error!("Cannot rename file: name cannot be empty");
+                        } else {
+                            ui_data.rename_pending = Some(new_name.to_string());
+                            close_after_action = true;
+                        }
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close_after_action = true;
+                    }
+                });
+            });
+        });
+
+    ui_data.rename_dialog_open = open && !close_after_action;
 }
 
 impl TextureDefinition {
@@ -344,7 +414,13 @@ impl TextureDefinition {
         });
 
         egui::ScrollArea::vertical().show(ui, | ui | {
-            ui.heading(name);
+            ui.horizontal(|ui| {
+                ui.heading(format!("File: {}", name));
+                if ui.button("Rename").clicked() {
+                    ui_data.rename_dialog_open = true;
+                    ui_data.rename_just_opened = true;
+                }
+            });
             ui.horizontal(| ui | {
                 ui.label("Light direction:");
                 ui.add(egui::DragValue::new(&mut self.lighting_settings.direction[0]).range(-100..=100));
@@ -442,5 +518,7 @@ impl TextureDefinition {
                 self.passes.push(TexturePass::new());
             }
         });
+
+        show_rename_dialog(ui.ctx(), ui_data, name, tmp_str);
     }
 }

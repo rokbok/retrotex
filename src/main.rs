@@ -9,6 +9,7 @@ use egui::TextureHandle;
 use strum_macros::{AsRefStr, EnumString, VariantNames};
 
 use crate::prelude::*;
+use crate::file_ui::show_file_list_panel;
 use crate::storage::FileRegistry;
 use crate::{definition::TextureDefinition, preview_ui::OngoingDrag};
 
@@ -22,6 +23,7 @@ pub mod noise;
 pub mod color;
 pub mod processing;
 pub mod storage;
+pub mod file_ui;
 
 pub const IMG_SIZE: i32 = 128;
 pub const IMG_PIXEL_COUNT: usize = IMG_SIZE as usize * IMG_SIZE as usize;
@@ -50,6 +52,10 @@ pub(crate) struct UiData {
     drag: OngoingDrag,
     preview_editing: Option<usize>,
     display_mode: DisplayMode,
+    rename_dialog_open: bool,
+    rename_just_opened: bool,
+    rename_input: String,
+    rename_pending: Option<String>,
 }
 
 struct RetroTexApp {
@@ -78,6 +84,10 @@ impl RetroTexApp {
                 drag: OngoingDrag::None,
                 preview_editing: None,
                 display_mode: DisplayMode::Lit,
+                rename_dialog_open: false,
+                rename_just_opened: false,
+                rename_input: String::new(),
+                rename_pending: None,
             },
         };
 
@@ -91,6 +101,15 @@ impl RetroTexApp {
 
 impl eframe::App for RetroTexApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        show_file_list_panel(ctx, &self.file_registry, &mut self.file_id);
+
+        if let Some(new_name) = self.ui_data.rename_pending.take() {
+            match self.file_registry.rename(self.file_id, &new_name) {
+                Ok(()) => {}
+                Err(e) => error!("Failed to rename file: {}", e),
+            }
+        }
+
         let file_ref = self.file_registry
             .file_by_id(self.file_id)
             .expect("Active file id not found in registry");
