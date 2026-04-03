@@ -1,6 +1,3 @@
-// TODO:
-// - Transition serialized Colors in u8
-
 use std::{hash::Hash, time::Instant};
 
 use clap::{Parser as _};
@@ -10,6 +7,7 @@ use strum_macros::{AsRefStr, EnumString, VariantNames};
 
 use crate::prelude::*;
 use crate::file_ui::show_file_list_panel;
+use crate::logs::{LogQueue, LogOverlay};
 use crate::settings::Settings;
 use crate::storage::FileRegistry;
 use crate::{definition::TextureDefinition, preview_ui::OngoingDrag};
@@ -26,6 +24,7 @@ pub mod processing;
 pub mod storage;
 pub mod file_ui;
 pub mod settings;
+pub mod logs;
 
 pub const IMG_SIZE: i32 = 128;
 pub const IMG_PIXEL_COUNT: usize = IMG_SIZE as usize * IMG_SIZE as usize;
@@ -68,10 +67,11 @@ struct RetroTexApp {
     last_unsaved_change: Instant,
     output_dir: String,
     ui_data: UiData,
+    log_overlay: LogOverlay,
 }
 
 impl RetroTexApp {
-    fn new(output_dir: String) -> Self {
+    fn new(output_dir: String, log_entries: LogQueue) -> Self {
         let mut file_registry = FileRegistry::read();
         let mut settings = Settings::load();
         let saved_file_id = settings.last_opened_id;
@@ -100,6 +100,7 @@ impl RetroTexApp {
                 rename_input: String::new(),
                 rename_pending: None,
             },
+            log_overlay: LogOverlay::new(log_entries),
         };
 
         ret
@@ -150,7 +151,8 @@ impl eframe::App for RetroTexApp {
                 });
             })
         };
-        
+
+        self.log_overlay.show(ctx);        
 
         let mut file_name_changed = false;
         if let Some(new_name) = self.ui_data.rename_pending.take() {
@@ -180,6 +182,10 @@ impl eframe::App for RetroTexApp {
         
         self.settings.last_opened_id = self.file_id;
         self.settings.save_if_changed();
+
+        if self.log_overlay.num_entries() > 0 {
+            ctx.request_repaint();
+        }
     }
 }
 
@@ -192,13 +198,11 @@ struct CommandLineArgs {
 
 
 fn main() {
-    env_logger::Builder::from_default_env()
-        .filter_level(log::LevelFilter::Info)
-        .init();
+    let log_entries = logs::init();
 
     let args = CommandLineArgs::parse();
     let output = args.output.unwrap_or_else(|| "output".to_string());
-    info!("Using output directory: {}", output);
+    debug!("Using output directory: {}", output);
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size((1600.0, 900.0)),
@@ -210,7 +214,7 @@ fn main() {
         native_options,
         Box::new(| cc |  {
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(RetroTexApp::new(output)))
+            Ok(Box::new(RetroTexApp::new(output, log_entries)))
         }),
     ).expect("Error running app")
 }

@@ -1,0 +1,5 @@
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Trace">
+  <rect x="4" y="4" width="16" height="16" rx="4" fill="none" stroke="#FFFFFF" stroke-width="2"/>
+  <path d="M8 8.4H16" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
+  <path d="M12 8.4V16" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
+</svg>

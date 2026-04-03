@@ -414,13 +414,18 @@ impl TextureDefinition {
         });
 
         egui::ScrollArea::vertical().show(ui, | ui | {
+            tmp_str.clear();
+            write!(tmp_str, "File: {}", name).expect("Writing to a string should never fail");
             ui.horizontal(|ui| {
-                ui.heading(format!("File: {}", name));
+                ui.heading(&*tmp_str);
                 if ui.button("Rename").clicked() {
                     ui_data.rename_dialog_open = true;
                     ui_data.rename_just_opened = true;
                 }
             });
+
+            ui.separator();
+
             ui.horizontal(| ui | {
                 ui.label("Light direction:");
                 ui.add(egui::DragValue::new(&mut self.lighting_settings.direction[0]).range(-100..=100));
