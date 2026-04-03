@@ -2,11 +2,9 @@ use std::fmt::Write as _;
 
 use egui::{Color32, Stroke};
 
-use crate::{DisplayMode, IMG_SIZE, TextureHandleSet, UiData, definition::{Coverage, Pattern, TextureDefinition, TexturePass}, processing::TextureLayers, util::{add_enum_dropdown, idx}};
+use crate::prelude::*;
+use crate::{DisplayMode, TextureHandleSet, UiData, definition::{Coverage, Pattern, TextureDefinition, TexturePass}, processing::TextureLayers, util::add_enum_dropdown};
 
-
-#[allow(unused_imports)]
-use log::{debug, error, log_enabled, info, warn, trace};
 
 #[allow(unused)]
 fn with_alpha(alpha: f32, mut stroke: egui::Stroke) -> egui::Stroke {

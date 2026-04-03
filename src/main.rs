@@ -1,7 +1,7 @@
 // TODO:
 // - Transition serialized Colors in u8
 
-use std::{cell::RefCell, hash::Hash, time::Instant};
+use std::{hash::Hash, time::Instant};
 
 use clap::{Parser as _};
 use eframe::egui;
@@ -9,17 +9,19 @@ use egui::TextureHandle;
 use strum_macros::{AsRefStr, EnumString, VariantNames};
 
 use crate::prelude::*;
-use crate::{load_save_undo::DefinitionFile, preview_ui::OngoingDrag, util::idx2coords};
+use crate::storage::FileRegistry;
+use crate::{definition::TextureDefinition, preview_ui::OngoingDrag};
 
 pub mod prelude;
 pub mod definition;
 pub mod definition_ui;
 pub mod preview_ui;
-pub mod load_save_undo;
+pub mod file;
 pub mod util;
 pub mod noise;
 pub mod color;
 pub mod processing;
+pub mod storage;
 
 pub const IMG_SIZE: i32 = 128;
 pub const IMG_PIXEL_COUNT: usize = IMG_SIZE as usize * IMG_SIZE as usize;
@@ -52,7 +54,8 @@ pub(crate) struct UiData {
 
 struct RetroTexApp {
     tmp_str: String,
-    file: RefCell<DefinitionFile>,
+    file_registry: FileRegistry,
+    file_id: u128,
     last_unsaved_change: Instant,
     output_dir: String,
     ui_data: UiData,
@@ -60,12 +63,16 @@ struct RetroTexApp {
 
 impl RetroTexApp {
     fn new(output_dir: String) -> Self {
-        let file = DefinitionFile::load_by_name_or_create(definition::DEFAULT_NAME);
+        let mut file_registry = FileRegistry::read();
+        let file_id = file_registry
+            .id_by_name(definition::DEFAULT_NAME)
+            .unwrap_or_else(|| file_registry.create(definition::DEFAULT_NAME, TextureDefinition::demo()));
 
         let ret = Self {
             tmp_str: String::new(),
+            file_registry,
+            file_id,
             last_unsaved_change: Instant::now(),
-            file: RefCell::new(file),
             output_dir,
             ui_data: UiData {
                 drag: OngoingDrag::None,
@@ -84,22 +91,26 @@ impl RetroTexApp {
 
 impl eframe::App for RetroTexApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let file_ref = self.file_registry
+            .file_by_id(self.file_id)
+            .expect("Active file id not found in registry");
+
         let closing = ctx.input(|i| {
             if i.key_pressed(egui::Key::F10) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             if i.key_pressed(egui::Key::Z) && i.modifiers.ctrl {
-                self.file.borrow_mut().undo();
+                file_ref.borrow_mut().undo();
             }
             if i.key_pressed(egui::Key::Y) && i.modifiers.ctrl {
-                self.file.borrow_mut().redo();
+                file_ref.borrow_mut().redo();
             }
             i.viewport().close_requested()
         });
 
         ctx.set_pixels_per_point(1.5);
 
-        let (mut file, ui_data) = (self.file.borrow_mut(), &mut self.ui_data);
+        let (mut file, ui_data) = (file_ref.borrow_mut(), &mut self.ui_data);
         file.update_images(ctx);
         file.update_layers();
 

@@ -6,9 +6,6 @@ use strum::{EnumCount, IntoEnumIterator};
 use crate::prelude::*;
 use crate::{UiData, color::{Color, EditableColor}, definition::{NoiseType, TextureDefinition, TexturePass}, util::add_enum_dropdown};
 
-#[allow(unused_imports)]
-use log::{debug, error, log_enabled, info, warn, trace};
-
 const SECTION_SPACING: f32 = 10.0;
 
 const DRAG_SCROLL_PART: f32 = 0.15;

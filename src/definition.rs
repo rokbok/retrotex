@@ -4,10 +4,9 @@ use glam::{FloatExt, IVec3, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr, EnumCount, EnumIter, EnumString, VariantNames};
 
-#[allow(unused_imports)]
-use log::{debug, error, log_enabled, info, warn, trace};
+use crate::prelude::*;
 
-use crate::{IMG_SIZE, color::{Color, EditableColor}, noise::{self, gaussian}, util};
+use crate::{color::{Color, EditableColor}, noise::{self, gaussian}, util};
 
 pub const DEFAULT_NAME: &str = "unnamed";
 

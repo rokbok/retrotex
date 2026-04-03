@@ -4,10 +4,7 @@ use glam::{FloatExt, IVec2, Vec2, Vec3};
 use rayon::prelude::*;
 
 use crate::prelude::*;
-use crate::{IMG_PIXEL_COUNT, IMG_SIZE, definition::{AOSettings, LightingSettings}, idx2coords};
-
-#[allow(unused_imports)]
-use log::{debug, error, log_enabled, info, warn, trace};
+use crate::{IMG_PIXEL_COUNT, definition::{AOSettings, LightingSettings}};
 
 
 fn calculate_normals(depth: &[f32; IMG_PIXEL_COUNT], normals: &mut Box<[Vec3; IMG_PIXEL_COUNT]>) {

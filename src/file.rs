@@ -3,14 +3,12 @@ use egui::{Color32, ColorImage};
 use glam::FloatExt;
 use rayon::prelude::*;
 
-use crate::{IMG_PIXEL_COUNT, IMG_SIZE, TextureHandleSet, color::{self, Color}, definition::TextureDefinition, processing::TextureLayers, util::idx2coords};
+use crate::prelude::*;
+use crate::{IMG_PIXEL_COUNT, TextureHandleSet, color::{self, Color}, definition::TextureDefinition, processing::TextureLayers};
 
-const FILE_LOCATION: &str = "textures";
+pub const FILE_LOCATION: &str = "textures";
+pub const FILE_EXTENSION: &str = "rtex";
 const UNDO_LIMIT: usize = 1000;
-
-#[allow(unused_imports)]
-use log::{debug, error, log_enabled, info, warn, trace};
-
 
 const PREVIEW_TEX_OPTIONS: egui::TextureOptions = egui::TextureOptions {
     magnification: egui::TextureFilter::Nearest,
@@ -89,6 +87,10 @@ impl DefinitionFile {
         &self.name
     }
 
+    pub fn id(&self) -> u128 {
+        self.id
+    }
+
     fn new_with_def_and_id(name: String, def: TextureDefinition, id: u128, is_saved: bool) -> Self {
         let hash = crate::util::single_hash(&def);
         Self {
@@ -140,7 +142,7 @@ impl DefinitionFile {
     }
 
     pub fn load_by_name(name: &str) -> Result<Self, String> {
-        let path = Path::new(FILE_LOCATION).join(format!("{}.rtex", name));
+        let path = Path::new(FILE_LOCATION).join(format!("{}.{}", name, FILE_EXTENSION));
         let mut reader = BufReader::new(File::open(&path).map_err(|e| format!("Failed to open file: {}", e))?);
         let mut buffer = String::new();
         reader.read_line(&mut buffer).map_err(|e| format!("Failed to read file: {}", e))?;
@@ -172,7 +174,7 @@ impl DefinitionFile {
 
         let json_content = serde_json::to_string(&self.def).map_err(|e| format!("Failed to serialize to JSON: {}", e))?;
 
-        let path = Path::new(FILE_LOCATION).join(format!("{}.rtex", self.name));
+        let path = Path::new(FILE_LOCATION).join(format!("{}.{}", self.name, FILE_EXTENSION));
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
         }

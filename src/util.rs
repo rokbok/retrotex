@@ -3,7 +3,7 @@ use std::{hash::{DefaultHasher, Hash, Hasher}, str::FromStr};
 use glam::Vec2;
 use strum::VariantNames;
 
-use crate::IMG_SIZE;
+use crate::prelude::*;
 
 
 
