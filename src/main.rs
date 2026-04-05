@@ -49,14 +49,21 @@ pub(crate) struct TextureHandleSet {
     lit: TextureHandle,
 }
 
+#[derive(Clone)]
+pub(crate) enum FileNameDialogMode {
+    Rename(String),
+    Create,
+}
+
 pub(crate) struct UiData {
     drag: OngoingDrag,
     preview_editing: Option<usize>,
     display_mode: DisplayMode,
-    rename_dialog_open: bool,
-    rename_just_opened: bool,
-    rename_input: String,
+    file_name_dialog: Option<FileNameDialogMode>,
+    file_name_dialog_just_opened: bool,
+    file_name_input: String,
     rename_pending: Option<String>,
+    create_pending: Option<String>,
 }
 
 struct RetroTexApp {
@@ -95,10 +102,11 @@ impl RetroTexApp {
                 drag: OngoingDrag::None,
                 preview_editing: None,
                 display_mode: DisplayMode::Lit,
-                rename_dialog_open: false,
-                rename_just_opened: false,
-                rename_input: String::new(),
+                file_name_dialog: None,
+                file_name_dialog_just_opened: false,
+                file_name_input: String::new(),
                 rename_pending: None,
+                create_pending: None,
             },
             log_overlay: LogOverlay::new(log_entries),
         };
@@ -113,7 +121,7 @@ impl RetroTexApp {
 
 impl eframe::App for RetroTexApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        show_file_list_panel(ctx, &self.file_registry, &mut self.file_id);
+        show_file_list_panel(ctx, &self.file_registry, &mut self.file_id, &mut self.ui_data);
 
         let file_ref = self.file_registry
             .file_by_id(self.file_id)
@@ -177,6 +185,29 @@ impl eframe::App for RetroTexApp {
                 file.save().unwrap_or_else(|e| error!("Failed to save texture {}: {}", file.name(), e));
                 file.write_images(&self.output_dir).unwrap_or_else(|e| error!("Failed to write images for texture {}: {}", file.name(), e));
                 assert!(!file.is_dirty(), "File should not be dirty after saving");
+            }
+        }
+
+        if let Some(new_name) = self.ui_data.create_pending.take() {
+            let trimmed_name = new_name.trim();
+            if trimmed_name.is_empty() {
+                error!("Cannot create file: name cannot be empty");
+            } else if self.file_registry.id_by_name(trimmed_name).is_some() {
+                error!("Cannot create file: a file named '{}' already exists", trimmed_name);
+            } else {
+                let id = self.file_registry.create(trimmed_name, TextureDefinition::demo());
+                if let Some(created_file) = self.file_registry.file_by_id(id) {
+                    let mut created_file = created_file.borrow_mut();
+                    if let Err(e) = created_file.save() {
+                        error!("Failed to create file '{}': {}", trimmed_name, e);
+                    }
+                    if let Err(e) = created_file.write_images(&self.output_dir) {
+                        error!("Failed to write images for new texture '{}': {}", trimmed_name, e);
+                    }
+                }
+                self.file_id = id;
+                self.last_unsaved_change = Instant::now();
+                ctx.request_repaint();
             }
         }
         

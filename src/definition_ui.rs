@@ -6,7 +6,7 @@ use glam::FloatExt;
 use strum::{EnumCount, IntoEnumIterator};
 
 use crate::prelude::*;
-use crate::{UiData, color::{Color, EditableColor}, definition::{NoiseType, TextureDefinition, TexturePass}, util::add_enum_dropdown};
+use crate::{FileNameDialogMode, UiData, color::{Color, EditableColor}, definition::{NoiseType, TextureDefinition, TexturePass}, util::add_enum_dropdown};
 
 const SECTION_SPACING: f32 = 10.0;
 
@@ -116,46 +116,61 @@ fn find_closest_y_center(y: f32, rects: &[egui::Response]) -> usize {
     }
 }
 
-fn show_rename_dialog(ctx: &egui::Context, ui_data: &mut UiData, name: &str, tmp_str: &mut String) {
-    if !ui_data.rename_dialog_open {
+fn show_file_name_dialog(ctx: &egui::Context, ui_data: &mut UiData, tmp_str: &mut String) {
+    let Some(dialog_mode) = &ui_data.file_name_dialog else {
         return;
-    }
+    };
 
-    let just_opened = ui_data.rename_just_opened;
+    let just_opened = ui_data.file_name_dialog_just_opened;
     if just_opened {
-        ui_data.rename_input.clear();
-        ui_data.rename_input.push_str(name);
-        ui_data.rename_just_opened = false;
+        ui_data.file_name_input.clear();
+        match &dialog_mode {
+            FileNameDialogMode::Rename(source_name) => ui_data.file_name_input.push_str(source_name),
+            FileNameDialogMode::Create => {}
+        }
+        ui_data.file_name_dialog_just_opened = false;
     }
 
-    let mut open = ui_data.rename_dialog_open;
+    let mut open = true;
     let mut close_after_action = false;
-    let mut do_save = false;
+    let mut do_submit = false;
 
-    egui::Window::new("Rename File")
-        .id(egui::Id::new("rename_file_modal"))
+    let (window_title, prompt_text, submit_button_text, empty_error) = match &dialog_mode {
+        FileNameDialogMode::Rename(source_name) => {
+            tmp_str.clear();
+            let _ = write!(tmp_str, "Rename file {} to", source_name);
+            ("Rename File", tmp_str.as_str(), "Save", "Cannot rename file: name cannot be empty")
+        }
+        FileNameDialogMode::Create => (
+            "Create File",
+            "Enter a new file name",
+            "Create",
+            "Cannot create file: name cannot be empty",
+        ),
+    };
+
+    egui::Window::new(window_title)
+        .id(egui::Id::new("file_name_modal"))
         .collapsible(false)
         .resizable(false)
         .fixed_size(egui::vec2(360.0, 120.0))
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .open(&mut open)
         .show(ctx, |ui| {
-            tmp_str.clear();
-            let _ = write!(tmp_str, "Rename file {} to", name);
-            ui.label(tmp_str.as_str());
+            ui.label(prompt_text);
 
-            let te_output = TextEdit::singleline(&mut ui_data.rename_input).show(ui);
+            let te_output = TextEdit::singleline(&mut ui_data.file_name_input).show(ui);
             if just_opened {
                 te_output.response.request_focus();
             }
             if te_output.response.gained_focus() {
                 let mut state = te_output.state;
-                let len = ui_data.rename_input.chars().count();
+                let len = ui_data.file_name_input.chars().count();
                 state.cursor.set_char_range(Some(CCursorRange::two(CCursor::new(0), CCursor::new(len))));
                 state.store(ctx, te_output.response.id);
             }
             if te_output.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                do_save = true;
+                do_submit = true;
             }
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 close_after_action = true;
@@ -165,12 +180,15 @@ fn show_rename_dialog(ctx: &egui::Context, ui_data: &mut UiData, name: &str, tmp
 
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Save").clicked() || do_save {
-                        let new_name = ui_data.rename_input.trim();
+                    if ui.button(submit_button_text).clicked() || do_submit {
+                        let new_name = ui_data.file_name_input.trim();
                         if new_name.is_empty() {
-                            error!("Cannot rename file: name cannot be empty");
+                            error!("{}", empty_error);
                         } else {
-                            ui_data.rename_pending = Some(new_name.to_string());
+                            match dialog_mode {
+                                FileNameDialogMode::Rename(_) => ui_data.rename_pending = Some(new_name.to_string()),
+                                FileNameDialogMode::Create => ui_data.create_pending = Some(new_name.to_string()),
+                            }
                             close_after_action = true;
                         }
                     }
@@ -181,7 +199,9 @@ fn show_rename_dialog(ctx: &egui::Context, ui_data: &mut UiData, name: &str, tmp
             });
         });
 
-    ui_data.rename_dialog_open = open && !close_after_action;
+    if !open || close_after_action {
+        ui_data.file_name_dialog = None;
+    }
 }
 
 impl TextureDefinition {
@@ -419,8 +439,8 @@ impl TextureDefinition {
             ui.horizontal(|ui| {
                 ui.heading(&*tmp_str);
                 if ui.button("Rename").clicked() {
-                    ui_data.rename_dialog_open = true;
-                    ui_data.rename_just_opened = true;
+                    ui_data.file_name_dialog = Some(FileNameDialogMode::Rename(name.to_string()));
+                    ui_data.file_name_dialog_just_opened = true;
                 }
             });
 
@@ -524,6 +544,6 @@ impl TextureDefinition {
             }
         });
 
-        show_rename_dialog(ui.ctx(), ui_data, name, tmp_str);
+        show_file_name_dialog(ui.ctx(), ui_data, tmp_str);
     }
 }

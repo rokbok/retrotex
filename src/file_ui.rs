@@ -1,11 +1,14 @@
 use eframe::egui;
 
+use crate::FileNameDialogMode;
 use crate::storage::FileRegistry;
+use crate::UiData;
 
 pub(crate) fn show_file_list_panel(
     ctx: &egui::Context,
     file_registry: &FileRegistry,
     active_file_id: &mut u128,
+    ui_data: &mut UiData,
 ) {
     egui::SidePanel::left("file_list_panel")
         .default_width(220.0)
@@ -16,11 +19,21 @@ pub(crate) fn show_file_list_panel(
 
             let files = file_registry.files_sorted();
 
-            for (id, name) in &files {
-                let selected = *id == *active_file_id;
-                if ui.selectable_label(selected, name).clicked() {
-                    *active_file_id = *id;
-                }
-            }
+            egui::ScrollArea::vertical()
+                .show(ui, |ui| {
+                    for (id, name) in &files {
+                        let selected = *id == *active_file_id;
+                        if ui.selectable_label(selected, name).clicked() {
+                            *active_file_id = *id;
+                        }
+                    }
+                    if ui
+                        .add_sized([ui.available_width(), ui.spacing().interact_size.y], egui::Button::new("New"))
+                        .clicked()
+                    {
+                        ui_data.file_name_dialog = Some(FileNameDialogMode::Create);
+                        ui_data.file_name_dialog_just_opened = true;
+                    }
+                });
         });
 }

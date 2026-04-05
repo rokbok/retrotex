@@ -158,6 +158,7 @@ impl LogOverlay {
         let now = Instant::now();
 
         {
+            // Lock as briefly as possible. We'll deadlock if we log from this thread during that time
             let mut q = self.queue.lock().expect("Log overlay mutex poisoned");
             self.entries.append(&mut q);
         }
@@ -167,37 +168,39 @@ impl LogOverlay {
             now.duration_since(e.created_at) < lifetime
         });
 
-        egui::Area::new("log_overlay".into())
-            .order(egui::Order::Foreground)
-            .anchor(Align2::LEFT_BOTTOM, egui::vec2(12.0, -12.0))
-            .interactable(false)
-            .show(ctx, |ui| {
-                let background = ui.visuals().window_fill().to_opaque();
-                let background = Color32::from_rgba_unmultiplied(background.r(), background.g(), background.b(), 140);
+        if !self.entries.is_empty() {
+            egui::Area::new("log_overlay".into())
+                .order(egui::Order::Foreground)
+                .anchor(Align2::LEFT_BOTTOM, egui::vec2(12.0, -12.0))
+                .interactable(false)
+                .show(ctx, |ui| {
+                    let background = ui.visuals().window_fill().to_opaque();
+                    let background = Color32::from_rgba_unmultiplied(background.r(), background.g(), background.b(), 140);
 
-                egui::Frame::new()
-                    .fill(background)
-                    .corner_radius(6.0)
-                    .inner_margin(8.0)
-                    .show(ui, |ui| {
-                        ui.set_max_width(500.0);
-                        ui.spacing_mut().item_spacing.y = 2.0;
-                        for entry in self.entries.iter() {
-                            let color = level_color(entry.level);
-                            ui.horizontal(|ui| {
-                                ui.add(
-                                    egui::Image::new(icon_for_level(entry.level))
-                                        .fit_to_exact_size(egui::vec2(14.0, 14.0))
-                                        .tint(color),
-                                );
-                                if matches!(entry.level, log::Level::Error | log::Level::Warn) {
-                                    ui.colored_label(color, &entry.text);
-                                } else {
-                                    ui.label(&entry.text);
-                                }
-                            });
-                        }
-                    });
-            });
+                    egui::Frame::new()
+                        .fill(background)
+                        .corner_radius(6.0)
+                        .inner_margin(8.0)
+                        .show(ui, |ui| {
+                            ui.set_max_width(500.0);
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            for entry in self.entries.iter() {
+                                let color = level_color(entry.level);
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::Image::new(icon_for_level(entry.level))
+                                            .fit_to_exact_size(egui::vec2(14.0, 14.0))
+                                            .tint(color),
+                                    );
+                                    if matches!(entry.level, log::Level::Error | log::Level::Warn) {
+                                        ui.colored_label(color, &entry.text);
+                                    } else {
+                                        ui.label(&entry.text);
+                                    }
+                                });
+                            }
+                        });
+                });
+        }
     }
 }
