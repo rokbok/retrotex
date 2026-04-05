@@ -664,7 +664,6 @@ pub struct GeneratedSample {
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 #[serde(default)]
 pub struct TextureDefinition {
-    #[serde(skip)] // This will be the filename
     pub ao_settings: AOSettings,
     pub lighting_settings: LightingSettings,
     pub passes: Vec<TexturePass>,

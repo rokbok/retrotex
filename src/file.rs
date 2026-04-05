@@ -237,6 +237,7 @@ impl DefinitionFile {
 
     pub fn update_layers(&mut self) -> &TextureLayers {
         if self.layers_hash != self.hash {
+            debug!("Regenerating layers for texture '{}'", self.name);
             self.layers.albedo.par_iter_mut()
                 .zip(self.layers.depth.par_iter_mut())
                 .enumerate()
@@ -248,6 +249,7 @@ impl DefinitionFile {
                     *depth_layer = s.depth;
                 });
             self.layers.recalculate_derived(&self.def.ao_settings, &self.def.lighting_settings);
+            self.layers_hash = self.hash;
         }
         &self.layers
     }
