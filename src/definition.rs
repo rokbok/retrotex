@@ -105,6 +105,7 @@ impl Display for BlendMode {
 pub struct LightingSettings {
     pub direction: [i32; 3],
     pub impact: i32,
+    pub use_shadows: bool,
 }
 
 impl LightingSettings {
@@ -118,6 +119,7 @@ impl Default for LightingSettings {
         Self {
             direction: [10, -50, 20],
             impact: 50,
+            use_shadows: true,
         }
     }
 }
@@ -661,6 +663,7 @@ impl TextureDefinition {
             lighting_settings: LightingSettings {
                 direction: [20, -50, 20],
                 impact: 50,
+                use_shadows: true,
             },
             passes: vec![
                 TexturePass {

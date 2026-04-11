@@ -4,6 +4,7 @@ use glam::{FloatExt, IVec2, Vec2, Vec3};
 use rayon::prelude::*;
 
 use crate::prelude::*;
+use crate::util::RayIterator;
 use crate::{IMG_PIXEL_COUNT, definition::{AOSettings, LightingSettings}};
 
 
@@ -76,10 +77,35 @@ fn calculate_ao(depth: &[f32; IMG_PIXEL_COUNT], ao: &mut Box<[f32; IMG_PIXEL_COU
     });
 }
 
+fn trace_shadow(depth: &[f32; IMG_PIXEL_COUNT], start: IVec2, light_dir: Vec3) -> f32 {
+    let xy_dir = Vec2::new(-light_dir.x, light_dir.y);
+    let xy_len = xy_dir.length();
+    if xy_len < 0.001 {
+        return 1.0; // Light is directly overhead, no lateral shadowing
+    }
+
+    let start_depth = depth[idx(start.x, start.y)];
+    let dz_per_xy = light_dir.z / xy_len;
+
+    for pos in RayIterator::new(start, xy_dir) {
+        if pos == start {
+            continue; // Skip the origin pixel
+        }
+        let xy_dist = (pos - start).as_vec2().length();
+        let ray_depth = start_depth + xy_dist * dz_per_xy;
+        if depth[idx(pos.x, pos.y)] > ray_depth {
+            return 0.0; // Occluded — starting pixel is in shadow
+        }
+    }
+
+    1.0 // No occluder found along the ray
+}
+
 fn calculate_light(
     albedo: &[Vec3; IMG_PIXEL_COUNT],
     normal: &[Vec3; IMG_PIXEL_COUNT],
     ao: &[f32; IMG_PIXEL_COUNT],
+    depth: &[f32; IMG_PIXEL_COUNT],
     lit: &mut Box<[Vec3; IMG_PIXEL_COUNT]>,
     light: &LightingSettings,
 ) {
@@ -94,7 +120,13 @@ fn calculate_light(
     lit.par_iter_mut().enumerate().for_each(|(i, lit)| {
         let col = albedo[i];
         let normal = normal[i];
-        let l = lvec.dot(normal).max(0.0) * lfact;
+        let shadow_fact = if light.use_shadows {
+            let (x, y) = idx2coords(i);
+            trace_shadow(depth, IVec2::new(x, y), light_dir)
+        } else {
+            1.0
+        };
+        let l = lvec.dot(normal).max(0.0) * shadow_fact * lfact;
         let amb = ao[i];
         let f = 1.0.lerp(l, (light.impact as f32 / 100.0).saturate()) * amb;
         *lit = col * f;
@@ -125,6 +157,6 @@ impl TextureLayers {
     pub fn recalculate_derived(&mut self, ao_settings: &AOSettings, light: &LightingSettings) {
         calculate_normals(&self.depth, &mut self.normal);
         calculate_ao(&self.depth, &mut self.ao, light.light_dir_vec3(), ao_settings);
-        calculate_light(&self.albedo, &self.normal, &self.ao, &mut self.lit, light);
+        calculate_light(&self.albedo, &self.normal, &self.ao, &self.depth, &mut self.lit, light);
     }
 }

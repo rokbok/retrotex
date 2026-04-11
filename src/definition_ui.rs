@@ -453,6 +453,7 @@ impl TextureDefinition {
                 ui.add(egui::DragValue::new(&mut self.lighting_settings.direction[2]).range(1..=100));
                 ui.label("Impact:");
                 ui.add(egui::DragValue::new(&mut self.lighting_settings.impact).range(0..=100)).on_hover_text("0 = unlit; 100 = maximum contrast");
+                ui.checkbox(&mut self.lighting_settings.use_shadows, "Shadows");
             });
             ui.horizontal_wrapped( | ui | {
                 ui.label("Ambient occlusion:");

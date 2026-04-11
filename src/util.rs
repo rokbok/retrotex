@@ -68,6 +68,83 @@ impl Iterator for LineIterator {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RayIterator {
+    current: IVec2,
+    step: IVec2,
+    t_max: Vec2,
+    t_delta: Vec2,
+    done: bool,
+}
+
+impl RayIterator {
+    pub fn new(start: IVec2, direction: Vec2) -> Self {
+        let step = IVec2::new(
+            if direction.x > 0.0 { 1 } else if direction.x < 0.0 { -1 } else { 0 },
+            if direction.y > 0.0 { 1 } else if direction.y < 0.0 { -1 } else { 0 },
+        );
+
+        let t_delta = Vec2::new(
+            if step.x == 0 { f32::INFINITY } else { 1.0 / direction.x.abs() },
+            if step.y == 0 { f32::INFINITY } else { 1.0 / direction.y.abs() },
+        );
+
+        let t_max = Vec2::new(
+            if step.x == 0 { f32::INFINITY } else { 0.5 / direction.x.abs() },
+            if step.y == 0 { f32::INFINITY } else { 0.5 / direction.y.abs() },
+        );
+
+        Self {
+            current: start,
+            step,
+            t_max,
+            t_delta,
+            done: !in_bounds(start),
+        }
+    }
+}
+
+impl Iterator for RayIterator {
+    type Item = IVec2;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+
+        let point = self.current;
+
+        if self.step.x == 0 && self.step.y == 0 {
+            self.done = true;
+            return Some(point);
+        }
+
+        if self.t_max.x < self.t_max.y {
+            self.current.x += self.step.x;
+            self.t_max.x += self.t_delta.x;
+        } else if self.t_max.y < self.t_max.x {
+            self.current.y += self.step.y;
+            self.t_max.y += self.t_delta.y;
+        } else {
+            self.current.x += self.step.x;
+            self.current.y += self.step.y;
+            self.t_max.x += self.t_delta.x;
+            self.t_max.y += self.t_delta.y;
+        }
+
+        if !in_bounds(self.current) {
+            self.done = true;
+        }
+
+        Some(point)
+    }
+}
+
+#[inline]
+fn in_bounds(p: IVec2) -> bool {
+    p.x >= 0 && p.y >= 0 && p.x < IMG_SIZE && p.y < IMG_SIZE
+}
+
 
 
 pub fn idx(x: i32, y: i32) -> usize {
@@ -171,6 +248,45 @@ mod tests {
         let got: Vec<IVec2> = LineIterator::new(IVec2::new(2, 2), IVec2::new(2, 2)).collect();
         let expected = pts(&[(2, 2)]);
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn ray_iterator_right_to_edge() {
+        let got: Vec<IVec2> = RayIterator::new(IVec2::new(0, 0), Vec2::new(1.0, 0.0)).collect();
+        assert_eq!(got.len(), IMG_SIZE as usize);
+        assert_eq!(got.first(), Some(&IVec2::new(0, 0)));
+        assert_eq!(got.last(), Some(&IVec2::new(IMG_SIZE - 1, 0)));
+    }
+
+    #[test]
+    fn ray_iterator_diagonal_to_corner() {
+        let got: Vec<IVec2> = RayIterator::new(IVec2::new(0, 0), Vec2::new(1.0, 1.0)).collect();
+        assert_eq!(got.len(), IMG_SIZE as usize);
+        assert_eq!(got.first(), Some(&IVec2::new(0, 0)));
+        assert_eq!(got.last(), Some(&IVec2::new(IMG_SIZE - 1, IMG_SIZE - 1)));
+        assert!(got.iter().all(|p| p.x == p.y));
+    }
+
+    #[test]
+    fn ray_iterator_up_to_top_edge() {
+        let start = IVec2::new(8, 10);
+        let got: Vec<IVec2> = RayIterator::new(start, Vec2::new(0.0, -1.0)).collect();
+        assert_eq!(got.len(), (start.y + 1) as usize);
+        assert_eq!(got.first(), Some(&start));
+        assert_eq!(got.last(), Some(&IVec2::new(8, 0)));
+    }
+
+    #[test]
+    fn ray_iterator_zero_direction_single_point() {
+        let start = IVec2::new(5, 6);
+        let got: Vec<IVec2> = RayIterator::new(start, Vec2::ZERO).collect();
+        assert_eq!(got, vec![start]);
+    }
+
+    #[test]
+    fn ray_iterator_start_out_of_bounds_is_empty() {
+        let got: Vec<IVec2> = RayIterator::new(IVec2::new(-1, 0), Vec2::new(1.0, 0.0)).collect();
+        assert!(got.is_empty());
     }
 }
 
