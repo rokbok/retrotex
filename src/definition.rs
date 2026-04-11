@@ -348,32 +348,10 @@ impl Pattern {
     }
 
     pub fn set_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, value: bool) {
-        let mut x = x1.floor() as i32;
-        let mut y = y1.floor() as i32;
-        let x2 = x2.floor() as i32;
-        let y2 = y2.floor() as i32;
-
-        let dx = (x2 - x).abs();
-        let dy = (y2 - y).abs();
-        let sx = if x < x2 { 1 } else { -1 };
-        let sy = if y < y2 { 1 } else { -1 };
-        let mut err = dx - dy;
-
-        loop {
-            self.set_safe(x, y, value);
-            if x == x2 && y == y2 {
-                break;
-            }           
-
-            let err2 = err * 2;
-            if err2 > -dy {
-                err -= dy;
-                x += sx;
-            }
-            if err2 < dx {
-                err += dx;
-                y += sy;
-            }
+        let p1 = glam::IVec2::new(x1.floor() as i32, y1.floor() as i32);
+        let p2 = glam::IVec2::new(x2.floor() as i32, y2.floor() as i32);
+        for point in util::LineIterator::new(p1, p2) {
+            self.set_safe(point.x, point.y, value);
         }
     }
     

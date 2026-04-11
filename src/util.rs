@@ -1,9 +1,72 @@
 use std::{hash::{DefaultHasher, Hash, Hasher}, str::FromStr};
 
-use glam::Vec2;
+use glam::{IVec2, Vec2};
 use strum::VariantNames;
 
 use crate::prelude::*;
+
+
+#[derive(Debug, Clone)]
+pub struct LineIterator {
+    current: IVec2,
+    end: IVec2,
+    step: IVec2,
+    dx: i32,
+    dy: i32,
+    err: i32,
+    done: bool,
+}
+
+impl LineIterator {
+    pub fn new(start: IVec2, end: IVec2) -> Self {
+        let current = start;
+        let end = end;
+        let dx = (end.x - current.x).abs();
+        let dy = (end.y - current.y).abs();
+        let step = IVec2::new(
+            if current.x < end.x { 1 } else { -1 },
+            if current.y < end.y { 1 } else { -1 },
+        );
+
+        Self {
+            current,
+            end,
+            step,
+            dx,
+            dy,
+            err: dx - dy,
+            done: false,
+        }
+    }
+}
+
+impl Iterator for LineIterator {
+    type Item = IVec2;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+
+        let point = self.current;
+        if self.current == self.end {
+            self.done = true;
+            return Some(point);
+        }
+
+        let err2 = self.err * 2;
+        if err2 > -self.dy {
+            self.err -= self.dy;
+            self.current.x += self.step.x;
+        }
+        if err2 < self.dx {
+            self.err += self.dx;
+            self.current.y += self.step.y;
+        }
+
+        Some(point)
+    }
+}
 
 
 
@@ -58,5 +121,56 @@ where <T as FromStr>::Err: std::fmt::Debug
                 *value = T::from_str(selected).expect("Selected value should always be valid");
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pts(points: &[(i32, i32)]) -> Vec<IVec2> {
+        points.iter().map(|&(x, y)| IVec2::new(x, y)).collect()
+    }
+
+    #[test]
+    fn line_iterator_horizontal() {
+        let got: Vec<IVec2> = LineIterator::new(IVec2::new(1, 2), IVec2::new(4, 2)).collect();
+        let expected = pts(&[(1, 2), (2, 2), (3, 2), (4, 2)]);
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn line_iterator_vertical() {
+        let got: Vec<IVec2> = LineIterator::new(IVec2::new(3, 1), IVec2::new(3, 4)).collect();
+        let expected = pts(&[(3, 1), (3, 2), (3, 3), (3, 4)]);
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn line_iterator_diagonal() {
+        let got: Vec<IVec2> = LineIterator::new(IVec2::new(1, 1), IVec2::new(4, 4)).collect();
+        let expected = pts(&[(1, 1), (2, 2), (3, 3), (4, 4)]);
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn line_iterator_steep_line() {
+        let got: Vec<IVec2> = LineIterator::new(IVec2::new(1, 1), IVec2::new(3, 6)).collect();
+        let expected = pts(&[(1, 1), (1, 2), (2, 3), (2, 4), (3, 5), (3, 6)]);
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn line_iterator_reverse_direction() {
+        let got: Vec<IVec2> = LineIterator::new(IVec2::new(4, 2), IVec2::new(1, 2)).collect();
+        let expected = pts(&[(4, 2), (3, 2), (2, 2), (1, 2)]);
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn line_iterator_single_point() {
+        let got: Vec<IVec2> = LineIterator::new(IVec2::new(2, 2), IVec2::new(2, 2)).collect();
+        let expected = pts(&[(2, 2)]);
+        assert_eq!(got, expected);
+    }
 }
 
