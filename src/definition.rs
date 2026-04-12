@@ -106,8 +106,10 @@ pub struct LightingSettings {
     pub direction: [i32; 3],
     pub impact: i32,
     pub shadows: bool,
+    pub smooth_shadows: bool,
     pub shadow_fade: bool,
     pub shadow_fade_distance: i32,
+    pub smooth_kernel_size: i32,
 }
 
 impl LightingSettings {
@@ -127,8 +129,10 @@ impl Default for LightingSettings {
             direction: [10, -50, 20],
             impact: 50,
             shadows: true,
-            shadow_fade: false,
+            smooth_shadows: true,
+            shadow_fade: true,
             shadow_fade_distance: 20,
+            smooth_kernel_size: 2,
         }
     }
 }

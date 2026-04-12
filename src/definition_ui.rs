@@ -455,6 +455,10 @@ impl TextureDefinition {
                 ui.add(egui::DragValue::new(&mut self.lighting_settings.impact).range(0..=100)).on_hover_text("0 = unlit; 100 = maximum contrast");
                 ui.checkbox(&mut self.lighting_settings.shadows, "Shadows");
                 if self.lighting_settings.shadows {
+                    ui.checkbox(&mut self.lighting_settings.smooth_shadows, "Smooth");
+                    if self.lighting_settings.smooth_shadows {
+                        ui.add(egui::DragValue::new(&mut self.lighting_settings.smooth_kernel_size).range(1..=10).prefix("Kernel:")).on_hover_text("Gaussian kernel radius in pixels");
+                    }
                     ui.checkbox(&mut self.lighting_settings.shadow_fade, "Fade");
                     if self.lighting_settings.shadow_fade {
                         ui.add(egui::DragValue::new(&mut self.lighting_settings.shadow_fade_distance).range(1..=(IMG_SIZE * 2)).prefix("Dist:")).on_hover_text("Distance in pixels over which shadows fade to nothing");
@@ -465,7 +469,7 @@ impl TextureDefinition {
                 ui.label("Ambient occlusion:");
                 ui.add(egui::DragValue::new(&mut self.ao_settings.strength).range(0..=100)).on_hover_text("Ambient occlusion strength");
                 ui.add(egui::DragValue::new(&mut self.ao_settings.radius).range(1..=(IMG_SIZE - 1)).prefix("Radius:")).on_hover_text("Higher = more distant occluders will contribute to AO");
-                ui.add(egui::DragValue::new(&mut self.ao_settings.bias).range(0..=200).prefix("Bias:")).on_hover_text("Bias ambient occlusion based on light direction");
+                ui.add(egui::DragValue::new(&mut self.ao_settings.bias).range(0..=200).prefix("Directional:")).on_hover_text("Bias ambient occlusion based on light direction");
             //    ui.checkbox(&mut self.ao_settings.ignore_surface_normal, "Ignore Surface Normal").on_hover_text("Experimental; Probably not something you want to use");
             });
             

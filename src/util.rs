@@ -200,6 +200,15 @@ where <T as FromStr>::Err: std::fmt::Debug
         });
 }
 
+#[inline]
+pub fn gaussian_kernel_weight(distance: f32, sigma: f32) -> f32 {
+    if sigma <= 0.0 {
+        return if distance == 0.0 { 1.0 } else { 0.0 };
+    }
+    let exponent = -(distance * distance) / (2.0 * sigma * sigma);
+    exponent.exp()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,6 +296,44 @@ mod tests {
     fn ray_iterator_start_out_of_bounds_is_empty() {
         let got: Vec<IVec2> = RayIterator::new(IVec2::new(-1, 0), Vec2::new(1.0, 0.0)).collect();
         assert!(got.is_empty());
+    }
+
+    #[test]
+    fn gaussian_kernel_weight_center_is_one() {
+        let w = gaussian_kernel_weight(0.0, 2.0);
+        assert!((w - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn gaussian_kernel_weight_matches_known_value() {
+        let w = gaussian_kernel_weight(1.0, 1.0);
+        let expected = (-0.5_f32).exp();
+        assert!((w - expected).abs() < 1e-6);
+    }
+
+    #[test]
+    fn gaussian_kernel_weight_decreases_with_distance() {
+        let sigma = 2.0;
+        let w0 = gaussian_kernel_weight(0.0, sigma);
+        let w1 = gaussian_kernel_weight(1.0, sigma);
+        let w2 = gaussian_kernel_weight(2.0, sigma);
+        assert!(w0 > w1 && w1 > w2);
+    }
+
+    #[test]
+    fn gaussian_kernel_weight_is_symmetric() {
+        let sigma = 3.0;
+        let wp = gaussian_kernel_weight(2.5, sigma);
+        let wn = gaussian_kernel_weight(-2.5, sigma);
+        assert!((wp - wn).abs() < 1e-6);
+    }
+
+    #[test]
+    fn gaussian_kernel_weight_non_positive_sigma_behavior() {
+        assert_eq!(gaussian_kernel_weight(0.0, 0.0), 1.0);
+        assert_eq!(gaussian_kernel_weight(1.0, 0.0), 0.0);
+        assert_eq!(gaussian_kernel_weight(0.0, -1.0), 1.0);
+        assert_eq!(gaussian_kernel_weight(2.0, -1.0), 0.0);
     }
 }
 

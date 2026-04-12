@@ -493,6 +493,15 @@ impl TextureDefinition {
                             let normal = layers.normal[index];
                             write!(tmp_str, "\nNormal: ({:.3}, {:.3}, {:.3})", normal.x, normal.y, normal.z).unwrap();
 
+                            let shadow = layers.shadow_raw[index];
+                            write!(tmp_str, "\nShadow Factor: {:.3}", shadow.x).unwrap();
+                            write!(tmp_str, "\nShadow Smooth: {:.3}", layers.shadow_smooth[index]).unwrap();
+                            if shadow.y.is_finite() {
+                                write!(tmp_str, "\nShadow Dist: {:.3}", shadow.y).unwrap();
+                            } else {
+                                write!(tmp_str, "\nShadow Dist: inf").unwrap();
+                            }
+
                             ui.label(&*tmp_str);
                         });
                     }
