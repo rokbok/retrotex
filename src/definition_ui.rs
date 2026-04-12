@@ -446,14 +446,20 @@ impl TextureDefinition {
 
             ui.separator();
 
-            ui.horizontal(| ui | {
+            ui.horizontal_wrapped(| ui | {
                 ui.label("Light direction:");
                 ui.add(egui::DragValue::new(&mut self.lighting_settings.direction[0]).range(-100..=100));
                 ui.add(egui::DragValue::new(&mut self.lighting_settings.direction[1]).range(-100..=100));
                 ui.add(egui::DragValue::new(&mut self.lighting_settings.direction[2]).range(1..=100));
                 ui.label("Impact:");
                 ui.add(egui::DragValue::new(&mut self.lighting_settings.impact).range(0..=100)).on_hover_text("0 = unlit; 100 = maximum contrast");
-                ui.checkbox(&mut self.lighting_settings.use_shadows, "Shadows");
+                ui.checkbox(&mut self.lighting_settings.shadows, "Shadows");
+                if self.lighting_settings.shadows {
+                    ui.checkbox(&mut self.lighting_settings.shadow_fade, "Fade");
+                    if self.lighting_settings.shadow_fade {
+                        ui.add(egui::DragValue::new(&mut self.lighting_settings.shadow_fade_distance).range(1..=(IMG_SIZE * 2)).prefix("Dist:")).on_hover_text("Distance in pixels over which shadows fade to nothing");
+                    }
+                }
             });
             ui.horizontal_wrapped( | ui | {
                 ui.label("Ambient occlusion:");

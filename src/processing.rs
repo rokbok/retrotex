@@ -77,7 +77,9 @@ fn calculate_ao(depth: &[f32; IMG_PIXEL_COUNT], ao: &mut Box<[f32; IMG_PIXEL_COU
     });
 }
 
-fn trace_shadow(depth: &[f32; IMG_PIXEL_COUNT], start: IVec2, light_dir: Vec3) -> f32 {
+fn trace_shadow(depth: &[f32; IMG_PIXEL_COUNT], start: IVec2, light: &LightingSettings) -> f32 {
+    let light_dir: Vec3 = light.light_dir_vec3();
+
     let xy_dir = Vec2::new(-light_dir.x, light_dir.y);
     let xy_len = xy_dir.length();
     if xy_len < 0.001 {
@@ -93,12 +95,18 @@ fn trace_shadow(depth: &[f32; IMG_PIXEL_COUNT], start: IVec2, light_dir: Vec3) -
         }
         let xy_dist = (pos - start).as_vec2().length();
         let ray_depth = start_depth + xy_dist * dz_per_xy;
-        if depth[idx(pos.x, pos.y)] > ray_depth {
-            return 0.0; // Occluded — starting pixel is in shadow
+        let excess = depth[idx(pos.x, pos.y)] - ray_depth;
+        if excess > 0.0 {
+            let fade_min = if light.shadow_fade {
+                (xy_dist / light.shadow_fade_distance as f32).min(1.0)
+            } else {
+                0.0
+            };
+            return fade_min;
         }
     }
 
-    1.0 // No occluder found along the ray
+    1.0 // No occluder found
 }
 
 fn calculate_light(
@@ -109,10 +117,7 @@ fn calculate_light(
     lit: &mut Box<[Vec3; IMG_PIXEL_COUNT]>,
     light: &LightingSettings,
 ) {
-    let mut light_dir: Vec3 = light.light_dir_vec3();
-    if light_dir.length_squared() < 0.001 {
-        light_dir = Vec3::new(1.0, -3.0, 2.0).normalize();
-    }
+    let light_dir: Vec3 = light.light_dir_vec3();
 
     let lfact = 1.0 / light_dir.z.abs().max(0.1); // Make sure flat surface has the assigned color exactly -- within reason
 
@@ -120,9 +125,9 @@ fn calculate_light(
     lit.par_iter_mut().enumerate().for_each(|(i, lit)| {
         let col = albedo[i];
         let normal = normal[i];
-        let shadow_fact = if light.use_shadows {
+        let shadow_fact = if light.shadows {
             let (x, y) = idx2coords(i);
-            trace_shadow(depth, IVec2::new(x, y), light_dir)
+            trace_shadow(depth, IVec2::new(x, y), light)
         } else {
             1.0
         };

@@ -105,12 +105,19 @@ impl Display for BlendMode {
 pub struct LightingSettings {
     pub direction: [i32; 3],
     pub impact: i32,
-    pub use_shadows: bool,
+    pub shadows: bool,
+    pub shadow_fade: bool,
+    pub shadow_fade_distance: i32,
 }
 
 impl LightingSettings {
     pub fn light_dir_vec3(&self) -> Vec3 {
-        IVec3::from_array(self.direction).as_vec3().normalize_or_zero()
+        let light_dir = IVec3::from_array(self.direction).as_vec3().normalize_or_zero();
+        if light_dir.length_squared() < 0.001 {
+            Vec3::new(1.0, -3.0, 2.0).normalize()
+        } else {
+            light_dir
+        }
     }
 }
 
@@ -119,7 +126,9 @@ impl Default for LightingSettings {
         Self {
             direction: [10, -50, 20],
             impact: 50,
-            use_shadows: true,
+            shadows: true,
+            shadow_fade: false,
+            shadow_fade_distance: 20,
         }
     }
 }
@@ -663,7 +672,8 @@ impl TextureDefinition {
             lighting_settings: LightingSettings {
                 direction: [20, -50, 20],
                 impact: 50,
-                use_shadows: true,
+                shadows: true,
+                ..Default::default()
             },
             passes: vec![
                 TexturePass {
