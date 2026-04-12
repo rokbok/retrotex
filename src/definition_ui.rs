@@ -365,7 +365,7 @@ impl TextureDefinition {
                         }
                         reseed_button(ui, &mut pass.noise.seed);
                     });
-                }   
+                }
 
                 ui.separator();
                 let new_coverage = mode_selector(ui, &mut pass.coverage, "Shape");

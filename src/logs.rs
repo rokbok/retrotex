@@ -6,6 +6,7 @@ use std::{
 };
 
 use eframe::egui::{self, Align2, Color32};
+use egui::RichText;
 use time::{OffsetDateTime, UtcOffset, macros::format_description};
 
 const LOG_OVERLAY_ERROR_WARN_LIFETIME: Duration = Duration::from_secs(5);
@@ -193,9 +194,11 @@ impl LogOverlay {
                                             .tint(color),
                                     );
                                     if matches!(entry.level, log::Level::Error | log::Level::Warn) {
-                                        ui.colored_label(color, &entry.text);
+                                        ui.add(egui::Label::new(RichText::new(&entry.text).color(color))
+                                            .selectable(false));
                                     } else {
-                                        ui.label(&entry.text);
+                                        ui.add(egui::Label::new(&entry.text)
+                                            .selectable(false));
                                     }
                                 });
                             }

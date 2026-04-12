@@ -254,17 +254,18 @@ impl DefinitionFile {
 
     pub fn update_layers(&mut self, updating: &mut Vec<FileId>, reg: &FileRegistry) -> Result<(), String> {
         if self.layers_hash != self.hash {
-            if updating.contains(&self.id) {
-                return Err(format!("Circular references: '{}' is already being updated", self.name));
-            }
-
             updating.push(self.id);
                 for pass in self.def.passes.iter() {
-                    let res = pass.tex_ref.as_ref()
-                        .and_then(|id| reg.file_by_id(*id))
-                        .map(|file_ref| file_ref.write().unwrap().update_layers(updating, reg));
-                    if let Some(Err(e)) = res {
-                        error!("Failed to update layers for reference '{}': {}", self.name, e);
+                    if let Some(rid) = pass.tex_ref.as_ref() {          
+                        if updating.contains(rid) {
+                            return Err(format!("Circular references: '{}' is already being updated", self.name));
+                        }
+
+                        let res = reg.file_by_id(*rid)
+                            .map(|file_ref| file_ref.write().unwrap().update_layers(updating, reg));
+                        if let Some(r) = res {
+                            r?
+                        }
                     }
                 }
             updating.pop();
