@@ -4,7 +4,7 @@ use glam::{FloatExt, IVec2, Vec2, Vec3};
 use rayon::prelude::*;
 
 use crate::prelude::*;
-use crate::util::{RayIterator, gaussian_kernel_weight};
+use crate::util::{RayIterator};
 use crate::{IMG_PIXEL_COUNT, definition::{AOSettings, LightingSettings}};
 
 
@@ -77,13 +77,13 @@ fn calculate_ao(depth: &[f32; IMG_PIXEL_COUNT], ao: &mut Box<[f32; IMG_PIXEL_COU
     });
 }
 
-fn trace_shadow_ray(depth: &[f32; IMG_PIXEL_COUNT], start: IVec2, light: &LightingSettings) -> Vec2 {
+fn trace_shadow_ray(depth: &[f32; IMG_PIXEL_COUNT], start: IVec2, light: &LightingSettings) -> f32 {
     let light_dir: Vec3 = light.light_dir_vec3();
 
     let xy_dir = Vec2::new(-light_dir.x, light_dir.y);
     let xy_len = xy_dir.length();
     if xy_len < 0.001 {
-        return Vec2::new(1.0, f32::INFINITY); // Light is directly overhead, no lateral shadowing
+        return 1.0; // Light is directly overhead, no lateral shadowing
     }
 
     let start_depth = depth[idx(start.x, start.y)];
@@ -102,20 +102,16 @@ fn trace_shadow_ray(depth: &[f32; IMG_PIXEL_COUNT], start: IVec2, light: &Lighti
             } else {
                 0.0
             };
-            return Vec2::new(fade_min, xy_dist);
+            return fade_min;
         }
     }
 
-    Vec2::new(1.0, f32::INFINITY) // No occluder found
+    1.0
 }
 
-fn trace_shadows(
-    depth: &[f32; IMG_PIXEL_COUNT],
-    shadow_raw: &mut Box<[Vec2; IMG_PIXEL_COUNT]>,
-    light: &LightingSettings,
-) {
+fn trace_shadows(depth: &[f32; IMG_PIXEL_COUNT], shadow_raw: &mut Box<[f32; IMG_PIXEL_COUNT]>, light: &LightingSettings) {
     if !light.shadows {
-        shadow_raw.par_iter_mut().for_each(|s| *s = Vec2::new(1.0, f32::INFINITY));
+        shadow_raw.par_iter_mut().for_each(|s| *s = 1.0);
         return;
     }
 
@@ -125,67 +121,11 @@ fn trace_shadows(
     });
 }
 
-fn smooth_shadow(
-    shadow_raw: &[Vec2; IMG_PIXEL_COUNT],
-    shadow_smooth: &mut Box<[f32; IMG_PIXEL_COUNT]>,
-    light: &LightingSettings,
-) {
-    if !light.smooth_shadows {
-        shadow_smooth.par_iter_mut().enumerate().for_each(|(i, s)| {
-            *s = shadow_raw[i].x;
-        });
-        return;
-    }
-
-    let kernel_size = light.smooth_kernel_size as f32;
-    let kernel_radius = kernel_size.ceil() as i32;
-
-    shadow_smooth.par_iter_mut().enumerate().for_each(|(i, s)| {
-        let (x, y) = idx2coords(i);
-        let x = x as i32;
-        let y = y as i32;
-        let center_dist = shadow_raw[i].y;
-
-        let sigma = if center_dist.is_finite() && center_dist > 0.0 {
-            // Clamp distance influence: very close = 0.3x, very far = 1.0x
-            let distance_factor = (center_dist / 50.0).min(1.0).max(0.3);
-            kernel_size * distance_factor
-        } else {
-            kernel_size
-        };
-
-        let mut weighted_sum = 0.0;
-        let mut weight_sum = 0.0;
-
-        for dy in -kernel_radius..=kernel_radius {
-            for dx in -kernel_radius..=kernel_radius {
-                let nx = x + dx;
-                let ny = y + dy;
-
-                if nx >= 0 && nx < IMG_SIZE as i32 && ny >= 0 && ny < IMG_SIZE as i32 {
-                    let neighbor_idx = idx(nx, ny);
-                    let pixel_distance = ((dx * dx + dy * dy) as f32).sqrt();
-                    let weight = gaussian_kernel_weight(pixel_distance, sigma);
-
-                    weighted_sum += shadow_raw[neighbor_idx].x * weight;
-                    weight_sum += weight;
-                }
-            }
-        }
-
-        *s = if weight_sum > 0.0 {
-            weighted_sum / weight_sum
-        } else {
-            shadow_raw[i].x
-        };
-    });
-}
-
 fn calculate_light(
     albedo: &[Vec3; IMG_PIXEL_COUNT],
     normal: &[Vec3; IMG_PIXEL_COUNT],
     ao: &[f32; IMG_PIXEL_COUNT],
-    shadow_smooth: &[f32; IMG_PIXEL_COUNT],
+    shadow: &[f32; IMG_PIXEL_COUNT],
     lit: &mut Box<[Vec3; IMG_PIXEL_COUNT]>,
     light: &LightingSettings,
 ) {
@@ -197,7 +137,7 @@ fn calculate_light(
     lit.par_iter_mut().enumerate().for_each(|(i, lit)| {
         let col = albedo[i];
         let normal = normal[i];
-        let shadow_fact = shadow_smooth[i];
+        let shadow_fact = shadow[i];
         let l = lvec.dot(normal).max(0.0) * shadow_fact * lfact;
         let amb = ao[i];
         let f = 1.0.lerp(l, (light.impact as f32 / 100.0).saturate()) * amb;
@@ -210,8 +150,7 @@ pub struct TextureLayers {
     pub depth: Box<[f32; IMG_PIXEL_COUNT]>,
     pub normal: Box<[Vec3; IMG_PIXEL_COUNT]>,
     pub ao: Box<[f32; IMG_PIXEL_COUNT]>,
-    pub shadow_raw: Box<[Vec2; IMG_PIXEL_COUNT]>,
-    pub shadow_smooth: Box<[f32; IMG_PIXEL_COUNT]>,
+    pub shadow: Box<[f32; IMG_PIXEL_COUNT]>,
     pub lit: Box<[Vec3; IMG_PIXEL_COUNT]>,
 }
 
@@ -222,8 +161,7 @@ impl Default for TextureLayers {
             depth: Box::new([0.0; IMG_PIXEL_COUNT]),
             normal: Box::new([Vec3::new(0.0, 0.0, 1.0); IMG_PIXEL_COUNT]),
             ao: Box::new([0.0; IMG_PIXEL_COUNT]),
-            shadow_raw: Box::new([Vec2::new(1.0, f32::INFINITY); IMG_PIXEL_COUNT]),
-            shadow_smooth: Box::new([1.0; IMG_PIXEL_COUNT]),
+            shadow: Box::new([1.0; IMG_PIXEL_COUNT]),
             lit: Box::new([Vec3::ZERO; IMG_PIXEL_COUNT]),
         }
     }
@@ -233,8 +171,7 @@ impl TextureLayers {
     pub fn recalculate_derived(&mut self, ao_settings: &AOSettings, light: &LightingSettings) {
         calculate_normals(&self.depth, &mut self.normal);
         calculate_ao(&self.depth, &mut self.ao, light.light_dir_vec3(), ao_settings);
-        trace_shadows(&self.depth, &mut self.shadow_raw, light);
-        smooth_shadow(&self.shadow_raw, &mut self.shadow_smooth, light);
-        calculate_light(&self.albedo, &self.normal, &self.ao, &self.shadow_smooth, &mut self.lit, light);
+        trace_shadows(&self.depth, &mut self.shadow, light);
+        calculate_light(&self.albedo, &self.normal, &self.ao, &self.shadow, &mut self.lit, light);
     }
 }

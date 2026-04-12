@@ -534,10 +534,6 @@ impl TextureDefinition {
                 ui.add(egui::DragValue::new(&mut self.lighting_settings.impact).range(0..=100)).on_hover_text("0 = unlit; 100 = maximum contrast");
                 ui.checkbox(&mut self.lighting_settings.shadows, "Shadows");
                 if self.lighting_settings.shadows {
-                    ui.checkbox(&mut self.lighting_settings.smooth_shadows, "Smooth");
-                    if self.lighting_settings.smooth_shadows {
-                        ui.add(egui::DragValue::new(&mut self.lighting_settings.smooth_kernel_size).range(1..=10).prefix("Kernel:")).on_hover_text("Gaussian kernel radius in pixels");
-                    }
                     ui.checkbox(&mut self.lighting_settings.shadow_fade, "Fade");
                     if self.lighting_settings.shadow_fade {
                         ui.add(egui::DragValue::new(&mut self.lighting_settings.shadow_fade_distance).range(1..=(IMG_SIZE * 2)).prefix("Dist:")).on_hover_text("Distance in pixels over which shadows fade to nothing");
