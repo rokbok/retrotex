@@ -3,7 +3,7 @@ use egui::{Color32, ColorImage};
 use glam::FloatExt;
 use rayon::prelude::*;
 
-use crate::prelude::*;
+use crate::{prelude::*, storage::FileRegistry};
 use crate::{IMG_PIXEL_COUNT, TextureHandleSet, color::{self, Color}, definition::TextureDefinition, processing::TextureLayers};
 
 pub const DEFAULT_NAME: &str = "unnamed";
@@ -17,6 +17,8 @@ const PREVIEW_TEX_OPTIONS: egui::TextureOptions = egui::TextureOptions {
     wrap_mode: egui::TextureWrapMode::ClampToEdge,
     mipmap_mode: None,
 };
+
+pub type FileId = u128;
 
 #[derive(Debug)]
 pub struct UndoStack {
@@ -63,7 +65,7 @@ impl UndoStack {
 }
 
 pub struct DefinitionFile {
-    id: u128,
+    id: FileId,
     name: String,
     def: TextureDefinition,
     hash: u64,
@@ -116,9 +118,15 @@ impl DefinitionFile {
         &self.def
     }
 
-    pub(crate) fn modify_definition<F: FnOnce(&mut TextureDefinition, &TextureHandleSet, &TextureLayers, &str)>(&mut self, ctx: &egui::Context, change_fn: F) -> bool {
+    pub(crate) fn modify_definition<F: FnOnce(&mut TextureDefinition, &TextureHandleSet, &TextureLayers, &str)>(
+        &mut self,
+        ctx: &egui::Context,
+        updating: &mut Vec<FileId>,
+        reg: &FileRegistry,
+        change_fn: F
+    ) -> bool {
         if self.images.is_none() {
-            self.update_images(ctx);
+            self.update_images(ctx, updating, reg);
         }
         change_fn(&mut self.def, &self.images.as_ref().unwrap(), &self.layers, &self.name);
         let prev_hash = self.hash;
@@ -126,8 +134,17 @@ impl DefinitionFile {
         prev_hash != self.hash
     }
 
+    pub fn get_layers(&self) -> &TextureLayers {
+        &self.layers
+    }
+
     pub fn is_dirty(&self) -> bool {
         self.hash != self.saved_hash
+    }
+
+    pub fn invalidate_images(&mut self) {
+        self.layers_hash = 0;
+        self.image_hash = 0;
     }
 
     pub fn load_by_name_or_create(name: &str) -> Self {
@@ -235,15 +252,30 @@ impl DefinitionFile {
         }
     }
 
-    pub fn update_layers(&mut self) -> &TextureLayers {
+    pub fn update_layers(&mut self, updating: &mut Vec<FileId>, reg: &FileRegistry) -> Result<(), String> {
         if self.layers_hash != self.hash {
+            if updating.contains(&self.id) {
+                return Err(format!("Circular references: '{}' is already being updated", self.name));
+            }
+
+            updating.push(self.id);
+                for pass in self.def.passes.iter() {
+                    let res = pass.tex_ref.as_ref()
+                        .and_then(|id| reg.file_by_id(*id))
+                        .map(|file_ref| file_ref.write().unwrap().update_layers(updating, reg));
+                    if let Some(Err(e)) = res {
+                        error!("Failed to update layers for reference '{}': {}", self.name, e);
+                    }
+                }
+            updating.pop();
+            
             debug!("Regenerating layers for texture '{}'", self.name);
             self.layers.albedo.par_iter_mut()
                 .zip(self.layers.depth.par_iter_mut())
                 .enumerate()
                 .for_each(|(i, (albedo_layer, depth_layer))| {
                     let (x, y) = idx2coords(i);
-                    let s = self.def.generate_pixel(x, y);
+                    let s = self.def.generate_pixel(x, y, reg);
                     *albedo_layer = s.albedo;
                     
                     *depth_layer = s.depth;
@@ -251,12 +283,12 @@ impl DefinitionFile {
             self.layers.recalculate_derived(&self.def.ao_settings, &self.def.lighting_settings);
             self.layers_hash = self.hash;
         }
-        &self.layers
+        Ok(())
     }
 
-    pub(crate) fn update_images(&mut self, ctx: &egui::Context) -> &TextureHandleSet {
+    pub(crate) fn update_images(&mut self, ctx: &egui::Context, updating: &mut Vec<FileId>, reg: &FileRegistry) -> &TextureHandleSet {
         if self.images.is_none() || self.image_hash != self.hash {
-            self.update_layers();
+            self.update_layers(updating, reg).unwrap_or_else(|e| error!("Failed to update layers for '{}': {}", self.name, e));
 
             let mut albedo_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
             let mut depth_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);

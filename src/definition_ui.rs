@@ -204,8 +204,67 @@ fn show_file_name_dialog(ctx: &egui::Context, ui_data: &mut UiData, tmp_str: &mu
     }
 }
 
+fn show_tex_ref_dialog(
+    ctx: &egui::Context,
+    def: &mut TextureDefinition,
+    ui_data: &mut UiData,
+    current_file_id: u128,
+    available_files: &[(u128, String)],
+) {
+    let Some(pass_idx) = ui_data.tex_ref_dialog_pass else {
+        return;
+    };
+
+    if pass_idx >= def.passes.len() {
+        ui_data.tex_ref_dialog_pass = None;
+        return;
+    }
+
+    let pass = &mut def.passes[pass_idx];
+    let mut open = true;
+    let mut close_after_action = false;
+
+    egui::Window::new("Select Referenced Texture")
+        .id(egui::Id::new("tex_ref_modal"))
+        .collapsible(false)
+        .resizable(false)
+        .fixed_size(egui::vec2(360.0, 420.0))
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            let mut has_choice = false;
+            egui::ScrollArea::vertical()
+                .max_height(280.0)
+                .show(ui, |ui| {
+                    for (id, name) in available_files {
+                        if *id == current_file_id {
+                            continue;
+                        }
+                        has_choice = true;
+                        let selected = pass.tex_ref == Some(*id);
+                        if ui.selectable_label(selected, name).clicked() {
+                            pass.tex_ref = Some(*id);
+                            close_after_action = true;
+                        }
+                    }
+                });
+
+            if !has_choice {
+                ui.label("No other textures are available.");
+            }
+
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                close_after_action = true;
+            }
+        });
+
+    if !open || close_after_action {
+        ui_data.tex_ref_dialog_pass = None;
+    }
+}
+
 impl TextureDefinition {
-    fn pass_ui(&mut self, ui: &mut egui::Ui, pass_idx: usize, ui_data: &mut UiData, monospace_width: f32, tmp_str: &mut String) -> (bool, Option<PassDrag>) {
+    fn pass_ui(&mut self, ui: &mut egui::Ui, pass_idx: usize, ui_data: &mut UiData, available_files: &[(u128, String)], monospace_width: f32, tmp_str: &mut String) -> (bool, Option<PassDrag>) {
         let pass = &mut self.passes[pass_idx];
         let group = ui.group(| ui | {
             let mut remove = false;
@@ -255,6 +314,26 @@ impl TextureDefinition {
                     add_color_edit(ui, &mut pass.color, monospace_width);
                     ui.label("Blend:");
                     add_enum_dropdown(ui, &mut pass.blend_mode, "blend_mode", pass_idx, false);
+                });
+
+                let reference_name = available_files
+                    .iter()
+                    .find(|(id, _)| Some(*id) == pass.tex_ref)
+                    .map(|(_, name)| name.as_str())
+                    .unwrap_or_else(|| {
+                        match pass.tex_ref {
+                            Some(_) => "Missing texture",
+                            None => "None",
+                        }
+                    });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Texture Ref:");
+                    if ui.button(reference_name).clicked() {
+                        ui_data.tex_ref_dialog_pass = Some(pass_idx);
+                    }
+                    if pass.tex_ref.is_some() && ui.button("Clear").clicked() {
+                        pass.tex_ref = None;
+                    }
                 });
 
                 ui.separator();
@@ -425,7 +504,7 @@ impl TextureDefinition {
         group.inner
     }
         
-    pub(crate) fn definition_ui(&mut self, ui: &mut egui::Ui, ui_data: &mut UiData, name: &str, tmp_str: &mut String) {
+    pub(crate) fn definition_ui(&mut self, ui: &mut egui::Ui, ui_data: &mut UiData, name: &str, current_file_id: u128, available_files: &[(u128, String)], tmp_str: &mut String) {
         let monospace_id = egui::TextStyle::Monospace.resolve(ui.style());
 
         // Estimate width of one character (monospace assumption works best)
@@ -482,7 +561,7 @@ impl TextureDefinition {
             drop_targets.push(resp);
             ui.scope(| ui | {
                 for pass_idx in 0..self.passes.len() {
-                    let (remove_this, new_drag) = self.pass_ui(ui, pass_idx, ui_data, monospace_width, tmp_str);
+                    let (remove_this, new_drag) = self.pass_ui(ui, pass_idx, ui_data, available_files, monospace_width, tmp_str);
                     let (_, resp) = ui.allocate_exact_size(egui::Vec2::new(ui.available_width(), pass_gap), egui::Sense::empty());
                     drop_targets.push(resp);
                     if remove_this {
@@ -556,5 +635,6 @@ impl TextureDefinition {
         });
 
         show_file_name_dialog(ui.ctx(), ui_data, tmp_str);
+        show_tex_ref_dialog(ui.ctx(), self, ui_data, current_file_id, available_files);
     }
 }

@@ -1,12 +1,12 @@
-use std::{cell::RefCell, collections::{HashMap, hash_map::Entry}};
+use std::{collections::{HashMap, hash_map::Entry}, sync::RwLock};
 
 use rayon::prelude::*;
 
-use crate::prelude::*;
+use crate::{file::FileId, prelude::*};
 use crate::{definition::TextureDefinition, file::{DefinitionFile, FILE_EXTENSION, FILE_LOCATION}};
 
-pub(crate) struct FileRegistry {
-    files: HashMap<u128, RefCell<DefinitionFile>>,
+pub struct FileRegistry {
+    files: HashMap<FileId, RwLock<DefinitionFile>>,
 }
 
 impl FileRegistry {
@@ -42,20 +42,20 @@ impl FileRegistry {
 
         loaded_files.sort_unstable_by(|a, b| a.name().cmp(b.name()));
 
-        let mut files = HashMap::with_capacity(loaded_files.len());
+        let mut files = HashMap::<FileId, RwLock<DefinitionFile>>::with_capacity(loaded_files.len());
         for file in loaded_files {
             let id = file.id();
             let name = file.name().to_string();
 
             match files.entry(id) {
                 Entry::Vacant(entry) => {
-                    entry.insert(RefCell::new(file));
+                    entry.insert(RwLock::new(file));
                 }
                 Entry::Occupied(existing) => {
                     error!(
                         "Duplicate texture id {} detected; keeping '{}' and skipping '{}', resolved by filename order",
                         id,
-                        existing.get().borrow().name(),
+                        existing.get().read().unwrap().name(),
                         name,
                     );
                 }
@@ -67,18 +67,18 @@ impl FileRegistry {
 
     pub fn id_by_name(&self, name: &str) -> Option<u128> {
         self.files.values()
-            .find(| file | file.borrow().name() == name)
-            .map(| file | file.borrow().id() )
+            .find(| file | file.read().unwrap().name() == name)
+            .map(| file | file.read().unwrap().id() )
     }
 
-    pub fn file_by_id(&self, id: u128) -> Option<&RefCell<DefinitionFile>> {
+    pub fn file_by_id(&self, id: u128) -> Option<&RwLock<DefinitionFile>> {
         self.files.get(&id)
     }
 
     pub fn create(&mut self, name: &str, def: TextureDefinition) -> u128 {
         let file = DefinitionFile::new_with_def(name.to_string(), def);
         let id = file.id();
-        self.files.insert(id, RefCell::new(file));
+        self.files.insert(id, RwLock::new(file));
         id
     }
 
@@ -87,7 +87,7 @@ impl FileRegistry {
             .files
             .values()
             .map(|file| {
-                let file = file.borrow();
+                let file = file.read().unwrap();
                 (file.id(), file.name().to_string())
             })
             .collect::<Vec<_>>();

@@ -4,7 +4,7 @@ use glam::{FloatExt, IVec3, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr, EnumCount, EnumIter, EnumString, VariantNames};
 
-use crate::prelude::*;
+use crate::{file::FileId, prelude::*, storage::FileRegistry};
 
 use crate::{color::{Color, EditableColor}, noise::{self, gaussian}, util};
 
@@ -410,6 +410,7 @@ impl Default for Pattern {
 #[serde(default)]
 pub struct TexturePass {
     pub name: Option<String>,
+    pub tex_ref: Option<FileId>,
     pub coverage: Coverage,
     pub enabled: bool,
     pub color: EditableColor<true>,
@@ -507,7 +508,7 @@ impl TexturePass {
         }
     }
     
-    fn apply(&self, dest: &mut Vec3, dest_d: &mut f32, x: i32, y: i32) {
+    fn apply(&self, dest: &mut Vec3, dest_d: &mut f32, x: i32, y: i32, reg: &FileRegistry) {
         let mut gen_x = x;
         let mut gen_y = y;
         let mut tile_x = 0;
@@ -554,6 +555,10 @@ impl TexturePass {
         }
 
         let mut src = self.color.color().to_linear();
+        self.tex_ref
+            .and_then(| id | reg.file_by_id(id))
+            .map(| file | file.read().unwrap().get_layers().lit[idx(x, y)] )
+            .map(| col | src *= col.extend(1.0) );
         // We don't want noise to "continue" across tiles
         let seed = self.noise.seed ^ (tile_x as u32).wrapping_mul(0x1f1f1f1f) ^ (tile_y as u32).wrapping_mul(0x1e1e1e1e);
         match self.noise.mode {
@@ -634,6 +639,7 @@ impl Default for TexturePass {
         Self {
             name: None,
             enabled: true,
+            tex_ref: None,
             color: Color::from_hex("#f48a71").unwrap().into(),
             coverage: Coverage::default(),
             feature_x: IMG_SIZE / 4,
@@ -772,14 +778,14 @@ impl TextureDefinition {
         }
     }
 
-    pub fn generate_pixel(&self, x: i32, y: i32) -> GeneratedSample {
+    pub fn generate_pixel(&self, x: i32, y: i32, reg: &FileRegistry) -> GeneratedSample {
         let mut ret = GeneratedSample {
             albedo: Vec3::ZERO,
             depth: 0.0,
         };
         for pass in &self.passes{
             if pass.enabled {
-                pass.apply(&mut ret.albedo, &mut ret.depth, x, y);
+                pass.apply(&mut ret.albedo, &mut ret.depth, x, y, reg);
             }
         }
         ret

@@ -1,15 +1,16 @@
 use eframe::egui;
 
+use crate::prelude::*;
 use crate::FileNameDialogMode;
-use crate::storage::FileRegistry;
 use crate::UiData;
 
 pub(crate) fn show_file_list_panel(
     ctx: &egui::Context,
-    file_registry: &FileRegistry,
-    active_file_id: &mut u128,
+    files: &[(FileId, String)],
+    active_file_id: &FileId,
     ui_data: &mut UiData,
-) {
+) -> Option<FileId> {
+    let mut ret = None;
     egui::SidePanel::left("file_list_panel")
         .default_width(220.0)
         .resizable(true)
@@ -17,14 +18,12 @@ pub(crate) fn show_file_list_panel(
             ui.heading("Files");
             ui.separator();
 
-            let files = file_registry.files_sorted();
-
             egui::ScrollArea::vertical()
                 .show(ui, |ui| {
-                    for (id, name) in &files {
+                    for (id, name) in files {
                         let selected = *id == *active_file_id;
                         if ui.selectable_label(selected, name).clicked() {
-                            *active_file_id = *id;
+                            ret = Some(*id);
                         }
                     }
                     if ui
@@ -36,4 +35,5 @@ pub(crate) fn show_file_list_panel(
                     }
                 });
         });
+    ret
 }

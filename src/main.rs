@@ -5,6 +5,7 @@ use eframe::egui;
 use egui::TextureHandle;
 use strum_macros::{AsRefStr, EnumString, VariantNames};
 
+use crate::file::FileId;
 use crate::prelude::*;
 use crate::file_ui::show_file_list_panel;
 use crate::logs::{LogQueue, LogOverlay};
@@ -61,6 +62,7 @@ pub(crate) struct UiData {
     display_mode: DisplayMode,
     file_name_dialog: Option<FileNameDialogMode>,
     file_name_dialog_just_opened: bool,
+    tex_ref_dialog_pass: Option<usize>,
     file_name_input: String,
     rename_pending: Option<String>,
     create_pending: Option<String>,
@@ -68,9 +70,10 @@ pub(crate) struct UiData {
 
 struct RetroTexApp {
     tmp_str: String,
+    tmp_id_stack: Vec<FileId>,
     file_registry: FileRegistry,
     settings: Settings,
-    file_id: u128,
+    file_id: FileId,
     last_unsaved_change: Instant,
     output_dir: String,
     ui_data: UiData,
@@ -93,6 +96,7 @@ impl RetroTexApp {
 
         let ret = Self {
             tmp_str: String::new(),
+            tmp_id_stack: Vec::new(),
             file_registry,
             settings,
             file_id,
@@ -104,6 +108,7 @@ impl RetroTexApp {
                 display_mode: DisplayMode::Lit,
                 file_name_dialog: None,
                 file_name_dialog_just_opened: false,
+                tex_ref_dialog_pass: None,
                 file_name_input: String::new(),
                 rename_pending: None,
                 create_pending: None,
@@ -121,21 +126,32 @@ impl RetroTexApp {
 
 impl eframe::App for RetroTexApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        show_file_list_panel(ctx, &self.file_registry, &mut self.file_id, &mut self.ui_data);
+        let available_files = self.file_registry.files_sorted();
+        let new_file = show_file_list_panel(ctx, &available_files, &self.file_id, &mut self.ui_data);
+        let selected_new_file = if let Some(fid) = new_file {
+            self.file_id = fid;
+            true
+        } else {
+            false
+        };
 
         let file_ref = self.file_registry
             .file_by_id(self.file_id)
             .expect("Active file id not found in registry");
+
+        if selected_new_file {
+            file_ref.write().unwrap().invalidate_images();
+        }
 
         let closing = ctx.input(|i| {
             if i.key_pressed(egui::Key::F10) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             if i.key_pressed(egui::Key::Z) && i.modifiers.ctrl {
-                file_ref.borrow_mut().undo();
+                file_ref.write().unwrap().undo();
             }
             if i.key_pressed(egui::Key::Y) && i.modifiers.ctrl {
-                file_ref.borrow_mut().redo();
+                file_ref.write().unwrap().redo();
             }
             i.viewport().close_requested()
         });
@@ -143,15 +159,16 @@ impl eframe::App for RetroTexApp {
         ctx.set_pixels_per_point(1.5);
 
         let changed = {
-            let (mut file, ui_data) = (file_ref.borrow_mut(), &mut self.ui_data);
-            file.update_images(ctx);
-            file.update_layers();
+            let (mut file, ui_data) = (file_ref.write().unwrap(), &mut self.ui_data);
+            self.tmp_id_stack.clear();
+            file.update_layers(&mut self.tmp_id_stack, &self.file_registry).unwrap_or_else(|e| error!("Failed to update layers for '{}': {}", file.name(), e));
+            file.update_images(ctx, &mut self.tmp_id_stack, &self.file_registry);
 
-            file.modify_definition(ctx, | def, images, layers, name | {
+            file.modify_definition(ctx, &mut self.tmp_id_stack, &self.file_registry, | def, images, layers, name | {
                 egui::SidePanel::right("right_panel")
                     .default_width(400.0)
                     .show(ctx, |ui| {
-                        def.definition_ui(ui, ui_data, name, &mut self.tmp_str);
+                        def.definition_ui(ui, ui_data, name, self.file_id, &available_files, &mut self.tmp_str);
                     });
 
                 egui::CentralPanel::default().show(ctx, |ui| {
@@ -164,7 +181,7 @@ impl eframe::App for RetroTexApp {
 
         let mut file_name_changed = false;
         if let Some(new_name) = self.ui_data.rename_pending.take() {
-            if let Err(e) = file_ref.borrow_mut().rename(&new_name) {
+            if let Err(e) = file_ref.write().unwrap().rename(&new_name) {
                 error!("Failed to rename file: {}", e);
             } else {
                 file_name_changed = true;
@@ -172,14 +189,15 @@ impl eframe::App for RetroTexApp {
         }
 
         if changed {
-            let mut file = file_ref.borrow_mut();
+            let mut file = file_ref.write().unwrap();
             self.last_unsaved_change = Instant::now();
-            file.update_images(ctx);
-            file.update_layers();
+            self.tmp_id_stack.clear();
+            file.update_layers(&mut self.tmp_id_stack, &self.file_registry).unwrap_or_else(|e| error!("Failed to update layers for '{}': {}", file.name(), e));
+            file.update_images(ctx, &mut self.tmp_id_stack, &self.file_registry);
         }
 
-        if file_ref.borrow().is_dirty() || file_name_changed {
-            let mut file = file_ref.borrow_mut();
+        if file_ref.read().unwrap().is_dirty() || file_name_changed {
+            let mut file = file_ref.write().unwrap();
             ctx.request_repaint(); // Keep updating until we save
             if closing || self.last_unsaved_change.elapsed().as_millis() >= AUTO_SAVE_DELAY_MILLIS as u128 {
                 file.save().unwrap_or_else(|e| error!("Failed to save texture {}: {}", file.name(), e));
@@ -197,7 +215,7 @@ impl eframe::App for RetroTexApp {
             } else {
                 let id = self.file_registry.create(trimmed_name, TextureDefinition::demo());
                 if let Some(created_file) = self.file_registry.file_by_id(id) {
-                    let mut created_file = created_file.borrow_mut();
+                    let mut created_file = created_file.write().unwrap();
                     if let Err(e) = created_file.save() {
                         error!("Failed to create file '{}': {}", trimmed_name, e);
                     }
