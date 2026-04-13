@@ -2,6 +2,7 @@ use std::{collections::HashMap, fs::File, io::BufReader, path::{Path, PathBuf}};
 
 use egui::{ColorImage, TextureHandle};
 use glam::Vec3;
+use kiddo::{SquaredEuclidean, immutable::float::kdtree::ImmutableKdTree};
 
 use crate::{color::Color, prelude::*};
 
@@ -18,37 +19,35 @@ const PALETTE_TEX_OPTIONS: egui::TextureOptions = egui::TextureOptions {
 pub struct Palette {
     pub name: String,
     pub image: Option<ColorImage>,
-    pub colors: Vec<Vec3>,
+    color_tree: ImmutableKdTree<f32, usize, 3, 8>,
+    colors: Vec<Vec3>, 
 }
 
 impl Palette {
     pub fn new(name: String, image: ColorImage) -> Self {
-        let colors: Vec<Vec3> = image.pixels.iter()
+        let colors: Vec<[f32; 3]> = image.pixels.iter()
             .copied()
             .filter(| px | {
                 px.a() > 0
             })
         .map(| px | {
             let unmu = px.to_srgba_unmultiplied();
-            Color::new(unmu[0], unmu[1], unmu[2], unmu[3]).to_linear().truncate()
+            Color::new(unmu[0], unmu[1], unmu[2], unmu[3]).to_linear().truncate().to_array()
         })
         .collect();
 
-        Self { name, image: Some(image), colors }
+        Self {
+            name,
+            image: Some(image),
+            color_tree: ImmutableKdTree::new_from_slice(&colors),
+            colors: colors.into_iter().map(Vec3::from).collect(),
+        }
     }
 
 
     pub fn sample(&self, color: Vec3) -> Vec3 {
-        let mut best_index = 0;
-        let mut best_distance_squared = f32::INFINITY;
-        for (i, &palette_color) in self.colors.iter().enumerate() {
-            let distance_squared = (palette_color - color).length_squared();
-            if distance_squared < best_distance_squared {
-                best_distance_squared = distance_squared;
-                best_index = i;
-            }
-        }
-        self.colors[best_index]
+        let n = self.color_tree.nearest_one::<SquaredEuclidean>(&color.to_array());
+        self.colors[n.item]
     }
 
     pub fn single_time_load(&mut self, ctx: &egui::Context) -> TextureHandle {

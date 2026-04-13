@@ -115,7 +115,7 @@ impl RetroTexApp {
             ui_data: UiData {
                 drag: OngoingDrag::None,
                 preview_editing: None,
-                display_mode: DisplayMode::Lit,
+                display_mode: DisplayMode::default(),
                 file_name_dialog: None,
                 file_name_dialog_just_opened: false,
                 tex_ref_dialog_pass: None,
