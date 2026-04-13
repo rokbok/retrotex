@@ -450,6 +450,7 @@ impl TextureDefinition {
             let image_rect = egui::Rect::from_center_size(available.center(), image_size);
             
             let tex = match ui_data.display_mode {
+                DisplayMode::Final => &textures.fin,
                 DisplayMode::Lit => &textures.lit,
                 DisplayMode::Albedo => &textures.albedo,
                 DisplayMode::Depth => &textures.depth,

@@ -38,6 +38,7 @@ const AUTO_SAVE_DELAY_MILLIS: u64 = 200;
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Default, AsRefStr, EnumString, VariantNames)]
 enum DisplayMode { 
     #[default]
+    Final,
     Lit,
     Albedo,
     Depth,
@@ -51,6 +52,7 @@ pub(crate) struct TextureHandleSet {
     normal: TextureHandle,
     ao: TextureHandle,
     lit: TextureHandle,
+    fin: TextureHandle
 }
 
 #[derive(Clone)]

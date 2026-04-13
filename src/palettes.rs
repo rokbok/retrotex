@@ -3,7 +3,7 @@ use std::{collections::HashMap, fs::File, io::BufReader, path::{Path, PathBuf}};
 use egui::{ColorImage, TextureHandle};
 use glam::Vec3;
 
-use crate::prelude::*;
+use crate::{color::Color, prelude::*};
 
 const PALETTES_DIR: &str = "palettes";
 
@@ -18,11 +18,37 @@ const PALETTE_TEX_OPTIONS: egui::TextureOptions = egui::TextureOptions {
 pub struct Palette {
     pub name: String,
     pub image: Option<ColorImage>,
+    pub colors: Vec<Vec3>,
 }
 
 impl Palette {
+    pub fn new(name: String, image: ColorImage) -> Self {
+        let colors: Vec<Vec3> = image.pixels.iter()
+            .copied()
+            .filter(| px | {
+                px.a() > 0
+            })
+        .map(| px | {
+            let unmu = px.to_srgba_unmultiplied();
+            Color::new(unmu[0], unmu[1], unmu[2], unmu[3]).to_linear().truncate()
+        })
+        .collect();
+
+        Self { name, image: Some(image), colors }
+    }
+
+
     pub fn sample(&self, color: Vec3) -> Vec3 {
-        color
+        let mut best_index = 0;
+        let mut best_distance_squared = f32::INFINITY;
+        for (i, &palette_color) in self.colors.iter().enumerate() {
+            let distance_squared = (palette_color - color).length_squared();
+            if distance_squared < best_distance_squared {
+                best_distance_squared = distance_squared;
+                best_index = i;
+            }
+        }
+        self.colors[best_index]
     }
 
     pub fn single_time_load(&mut self, ctx: &egui::Context) -> TextureHandle {
@@ -196,10 +222,7 @@ fn load_palette_from_png(path: &Path) -> Result<Palette, String> {
         .map(str::to_string)
         .ok_or_else(|| "Invalid UTF-8 file name".to_string())?;
 
-    Ok(Palette {
-        name,
-        image: Some(image),
-    })
+    Ok(Palette::new(name, image))
 }
 
 pub fn palettes_dir() -> PathBuf {

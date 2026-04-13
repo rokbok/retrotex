@@ -301,14 +301,17 @@ impl DefinitionFile {
             let mut normal_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
             let mut ao_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
             let mut lit_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
+            let mut fin_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
+
 
             albedo_img.pixels.par_iter_mut()
                 .zip(depth_img.pixels.par_iter_mut())
                 .zip(normal_img.pixels.par_iter_mut())
                 .zip(ao_img.pixels.par_iter_mut())
                 .zip(lit_img.pixels.par_iter_mut())
+                .zip(fin_img.pixels.par_iter_mut())
                 .enumerate()
-                .for_each(|(index, ((((albedo_px, depth_px), normal_px), ao_px), lit_px))| {
+                .for_each(|(index, (((((albedo_px, depth_px), normal_px), ao_px), lit_px), fin_px))| {
                     let a = self.layers.albedo[index];
                     *albedo_px = color::Color::from_linear(a.extend(1.0)).into();
                     
@@ -323,6 +326,9 @@ impl DefinitionFile {
 
                     let lit = self.layers.lit[index];
                     *lit_px = color::Color::from_linear(lit.extend(1.0)).into();
+
+                    let fin = self.layers.fin[index];
+                    *fin_px = color::Color::from_linear(fin.extend(1.0)).into();
                 });
 
             if let Some(tex) = &mut self.images {
@@ -331,6 +337,7 @@ impl DefinitionFile {
                 tex.normal.set(normal_img, PREVIEW_TEX_OPTIONS);
                 tex.ao.set(ao_img, PREVIEW_TEX_OPTIONS);
                 tex.lit.set(lit_img, PREVIEW_TEX_OPTIONS);
+                tex.fin.set(fin_img, PREVIEW_TEX_OPTIONS);
                 // Data already was written into the correct place
             } else {
                 self.images = Some(TextureHandleSet {
@@ -339,6 +346,7 @@ impl DefinitionFile {
                     normal: ctx.load_texture("preview_normal", normal_img, PREVIEW_TEX_OPTIONS),
                     ao: ctx.load_texture("preview_ao", ao_img, PREVIEW_TEX_OPTIONS),
                     lit: ctx.load_texture("preview_lit", lit_img, PREVIEW_TEX_OPTIONS),
+                    fin: ctx.load_texture("preview_fin", fin_img, PREVIEW_TEX_OPTIONS),
                 });
             }
             self.image_hash = self.hash;
