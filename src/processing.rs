@@ -172,9 +172,42 @@ fn calculate_light(
 
 fn apply_palette(lit: &[Vec3; IMG_PIXEL_COUNT], fin: &mut Box<[Vec3; IMG_PIXEL_COUNT]>, palette: Option<&Palette>) {
     if let Some(palette) = palette {
-        fin.par_iter_mut().enumerate().for_each(|(i, fin)| {
-            *fin = palette.sample(lit[i]);
-        });
+        // Floyd-Steinberg dithering
+        for i in 0..IMG_PIXEL_COUNT {
+            fin[i] = lit[i];
+        }
+        
+        for y in 0..IMG_SIZE {
+            for x in 0..IMG_SIZE {
+                let i = idx(x, y);
+                let color = fin[i];
+                let quantized = palette.sample(color);
+                fin[i] = quantized;
+                
+                // Calculate quantization error
+                let error = color - quantized;
+                
+                // Distribute error using Floyd-Steinberg weights:
+                // (x+1, y): 7/16
+                if x + 1 < IMG_SIZE {
+                    let j = idx(x + 1, y);
+                    fin[j] = fin[j] + error * (7.0 / 16.0);
+                }
+                // (x-1, y+1): 3/16, (x, y+1): 5/16, (x+1, y+1): 1/16
+                if y + 1 < IMG_SIZE {
+                    if x > 0 {
+                        let j = idx(x - 1, y + 1);
+                        fin[j] = fin[j] + error * (3.0 / 16.0);
+                    }
+                    let j = idx(x, y + 1);
+                    fin[j] = fin[j] + error * (5.0 / 16.0);
+                    if x + 1 < IMG_SIZE {
+                        let j = idx(x + 1, y + 1);
+                        fin[j] = fin[j] + error * (1.0 / 16.0);
+                    }
+                }
+            }
+        }
     } else {
         fin.par_iter_mut().enumerate().for_each(|(i, fin)| {
             *fin = lit[i];
