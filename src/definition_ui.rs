@@ -527,9 +527,9 @@ impl TextureDefinition {
 
             ui.horizontal_wrapped(| ui | {
                 ui.label("Light direction:");
-                ui.add(egui::DragValue::new(&mut self.lighting_settings.direction[0]).range(-100..=100));
-                ui.add(egui::DragValue::new(&mut self.lighting_settings.direction[1]).range(-100..=100));
-                ui.add(egui::DragValue::new(&mut self.lighting_settings.direction[2]).range(1..=100));
+                ui.add(egui::DragValue::new(&mut self.lighting_settings.direction[0]).prefix("X:").range(-100..=100));
+                ui.add(egui::DragValue::new(&mut self.lighting_settings.direction[1]).prefix("Y:").range(-100..=100));
+                ui.add(egui::DragValue::new(&mut self.lighting_settings.direction[2]).prefix("Z:").range(1..=100));
                 ui.label("Impact:");
                 ui.add(egui::DragValue::new(&mut self.lighting_settings.impact).range(0..=100)).on_hover_text("0 = unlit; 100 = maximum contrast");
                 ui.checkbox(&mut self.lighting_settings.shadows, "Shadows");
@@ -537,6 +537,10 @@ impl TextureDefinition {
                     ui.checkbox(&mut self.lighting_settings.shadow_fade, "Fade");
                     if self.lighting_settings.shadow_fade {
                         ui.add(egui::DragValue::new(&mut self.lighting_settings.shadow_fade_distance).range(1..=(IMG_SIZE * 2)).prefix("Dist:")).on_hover_text("Distance in pixels over which shadows fade to nothing");
+                    }
+                    ui.add(egui::DragValue::new(&mut self.lighting_settings.shadow_rays).range(1..=64).prefix("Rays:")).on_hover_text("Number of rays to cast for soft shadows (more = softer, but slower)");
+                    if self.lighting_settings.shadow_rays > 1 {
+                        ui.add(egui::DragValue::new(&mut self.lighting_settings.shadow_ray_spread.v).range(0..=100).prefix("Spread:"));
                     }
                 }
             });

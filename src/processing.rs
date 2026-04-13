@@ -3,6 +3,7 @@ use std::iter::zip;
 use glam::{FloatExt, IVec2, Vec2, Vec3};
 use rayon::prelude::*;
 
+use crate::noise::gaussian;
 use crate::prelude::*;
 use crate::util::{RayIterator};
 use crate::{IMG_PIXEL_COUNT, definition::{AOSettings, LightingSettings}};
@@ -77,9 +78,7 @@ fn calculate_ao(depth: &[f32; IMG_PIXEL_COUNT], ao: &mut Box<[f32; IMG_PIXEL_COU
     });
 }
 
-fn trace_shadow_ray(depth: &[f32; IMG_PIXEL_COUNT], start: IVec2, light: &LightingSettings) -> f32 {
-    let light_dir: Vec3 = light.light_dir_vec3();
-
+fn trace_shadow_ray(depth: &[f32; IMG_PIXEL_COUNT], start: IVec2, light_dir: Vec3, light: &LightingSettings) -> f32 {
     let xy_dir = Vec2::new(-light_dir.x, light_dir.y);
     let xy_len = xy_dir.length();
     if xy_len < 0.001 {
@@ -115,9 +114,34 @@ fn trace_shadows(depth: &[f32; IMG_PIXEL_COUNT], shadow_raw: &mut Box<[f32; IMG_
         return;
     }
 
+    let use_soft_shadows = light.shadow_rays > 1 && light.shadow_ray_spread.v > 0;
+    let light_dir = light.light_dir_vec3();
+    let (ld_right, ld_up) = if use_soft_shadows && light_dir.z.abs() < 0.999 {
+        let right = light_dir.cross(Vec3::Y).normalize_or_zero();
+        let up = light_dir.cross(right).normalize_or_zero();
+        (right, up)
+    } else {
+        (Vec3::ZERO, Vec3::ZERO)
+    };
+    let spread = f32::from(light.shadow_ray_spread);
+
     shadow_raw.par_iter_mut().enumerate().for_each(|(i, s)| {
         let (x, y) = idx2coords(i);
-        *s = trace_shadow_ray(depth, IVec2::new(x, y), light);
+        let mut accum = 0.0_f32;
+        for r in 0..light.shadow_rays {
+            let mut my_dir = light_dir;
+            if use_soft_shadows {
+                let s1_64 = single_hash(&[x, y, r]);
+                let s1 = ((s1_64 & 0xFFFFFFFF) ^ (s1_64 >> 32)) as u32;
+                let s2 = s1 ^ 0xDEADBEEF;
+                my_dir = light_dir
+                    + spread * gaussian(x, y, 1, s1) * ld_right
+                    + spread * gaussian(x, y, 1, s2) * ld_up;
+                my_dir = my_dir.normalize_or_zero();
+            }
+            accum +=  trace_shadow_ray(depth, IVec2::new(x, y), my_dir, light);
+        }
+        *s = accum / light.shadow_rays as f32;
     });
 }
 

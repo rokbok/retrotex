@@ -108,6 +108,8 @@ pub struct LightingSettings {
     pub shadows: bool,
     pub shadow_fade: bool,
     pub shadow_fade_distance: i32,
+    pub shadow_rays: i32,
+    pub shadow_ray_spread: FloatAsInt<1000>,
 }
 
 impl LightingSettings {
@@ -129,6 +131,8 @@ impl Default for LightingSettings {
             shadows: true,
             shadow_fade: true,
             shadow_fade_distance: 20,
+            shadow_rays: 16,
+            shadow_ray_spread: 0.008.into(),
         }
     }
 }
