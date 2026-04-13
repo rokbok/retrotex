@@ -263,6 +263,76 @@ fn show_tex_ref_dialog(
     }
 }
 
+fn show_palette_dialog(
+    ctx: &egui::Context,
+    def: &mut TextureDefinition,
+    ui_data: &mut UiData,
+    palette_names: &[String],
+) {
+    if !ui_data.palette_dialog_open {
+        return;
+    }
+
+    if palette_names.is_empty() {
+        ui_data.palette_dialog_open = false;
+        return;
+    }
+
+    let mut open = true;
+    let mut close_after_action = false;
+
+    egui::Window::new("Select Palette")
+        .id(egui::Id::new("palette_modal"))
+        .collapsible(false)
+        .resizable(false)
+        .fixed_size(egui::vec2(360.0, 420.0))
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical()
+                .max_height(320.0)
+                .show(ui, |ui| {
+                    let image_size = 64.0;
+                    for name in palette_names {
+                        let selected = def.palette.as_deref() == Some(name.as_str());
+
+                        ui.horizontal(|ui| {
+                            if let Some(tex) = ui_data.palette_textures.as_ref().expect("Palette textures should have been loaded at this point").get(name) {
+                                ui.image(egui::load::SizedTexture::new(
+                                    tex.id(),
+                                    egui::vec2(image_size, image_size),
+                                ));
+                            }
+                            if ui.add_sized(
+                                [ui.available_width(), image_size],
+                                egui::Button::selectable(selected, name.as_str()),
+                            ).clicked() {
+                                def.palette = Some(name.clone());
+                                close_after_action = true;
+                            }
+                        });
+                    }
+                });
+
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Cancel").clicked() {
+                        close_after_action = true;
+                    }
+                });
+            });
+
+            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                close_after_action = true;
+            }
+        });
+
+    if !open || close_after_action {
+        ui_data.palette_dialog_open = false;
+    }
+}
+
 impl TextureDefinition {
     fn pass_ui(&mut self, ui: &mut egui::Ui, pass_idx: usize, ui_data: &mut UiData, available_files: &[(u128, String)], monospace_width: f32, tmp_str: &mut String) -> (bool, Option<PassDrag>) {
         let pass = &mut self.passes[pass_idx];
@@ -504,7 +574,7 @@ impl TextureDefinition {
         group.inner
     }
         
-    pub(crate) fn definition_ui(&mut self, ui: &mut egui::Ui, ui_data: &mut UiData, name: &str, current_file_id: u128, available_files: &[(u128, String)], tmp_str: &mut String) {
+    pub(crate) fn definition_ui(&mut self, ui: &mut egui::Ui, ui_data: &mut UiData, name: &str, current_file_id: u128, available_files: &[(u128, String)], palette_names: &[String], tmp_str: &mut String) {
         let monospace_id = egui::TextStyle::Monospace.resolve(ui.style());
 
         // Estimate width of one character (monospace assumption works best)
@@ -520,6 +590,25 @@ impl TextureDefinition {
                 if ui.button("Rename").clicked() {
                     ui_data.file_name_dialog = Some(FileNameDialogMode::Rename(name.to_string()));
                     ui_data.file_name_dialog_just_opened = true;
+                }
+            });
+
+            ui.separator();
+
+            let selected_palette_name = self.palette.clone().unwrap_or_else(|| "None".to_string());
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Palette:");
+                if ui
+                    .add_enabled(!palette_names.is_empty(), egui::Button::new(&selected_palette_name))
+                    .clicked()
+                {
+                    ui_data.palette_dialog_open = true;
+                }
+                if palette_names.is_empty() {
+                    ui.label("No palettes found.");
+                }
+                if self.palette.is_some() && ui.button("Clear").clicked() {
+                    self.palette = None;
                 }
             });
 
@@ -636,5 +725,6 @@ impl TextureDefinition {
 
         show_file_name_dialog(ui.ctx(), ui_data, tmp_str);
         show_tex_ref_dialog(ui.ctx(), self, ui_data, current_file_id, available_files);
+        show_palette_dialog(ui.ctx(), self, ui_data, palette_names);
     }
 }

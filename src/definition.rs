@@ -663,6 +663,7 @@ pub struct GeneratedSample {
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 #[serde(default)]
 pub struct TextureDefinition {
+    pub palette: Option<String>,
     pub ao_settings: AOSettings,
     pub lighting_settings: LightingSettings,
     pub passes: Vec<TexturePass>,
@@ -673,6 +674,7 @@ impl TextureDefinition {
 
     pub fn demo() -> Self {
         Self {
+            palette: None,
             ao_settings: AOSettings {
                 radius: 4,
                 strength: 50,
@@ -795,6 +797,7 @@ impl TextureDefinition {
 impl Default for TextureDefinition {
     fn default() -> Self {
         Self {
+            palette: None,
             ao_settings: AOSettings::default(),
             lighting_settings: LightingSettings::default(),
             passes: vec![],

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::{hash::Hash, time::Instant};
 
 use clap::{Parser as _};
@@ -9,6 +10,7 @@ use crate::file::FileId;
 use crate::prelude::*;
 use crate::file_ui::show_file_list_panel;
 use crate::logs::{LogQueue, LogOverlay};
+use crate::palettes::PaletteManager;
 use crate::settings::Settings;
 use crate::storage::FileRegistry;
 use crate::{definition::TextureDefinition, preview_ui::OngoingDrag};
@@ -26,6 +28,7 @@ pub mod storage;
 pub mod file_ui;
 pub mod settings;
 pub mod logs;
+pub mod palettes;
 
 pub const IMG_SIZE: i32 = 128;
 pub const IMG_PIXEL_COUNT: usize = IMG_SIZE as usize * IMG_SIZE as usize;
@@ -63,15 +66,18 @@ pub(crate) struct UiData {
     file_name_dialog: Option<FileNameDialogMode>,
     file_name_dialog_just_opened: bool,
     tex_ref_dialog_pass: Option<usize>,
+    palette_dialog_open: bool,
     file_name_input: String,
     rename_pending: Option<String>,
     create_pending: Option<String>,
+    palette_textures: Option<HashMap<String, TextureHandle>>,
 }
 
 struct RetroTexApp {
     tmp_str: String,
     tmp_id_stack: Vec<FileId>,
     file_registry: FileRegistry,
+    palettes: PaletteManager,
     settings: Settings,
     file_id: FileId,
     last_unsaved_change: Instant,
@@ -93,11 +99,13 @@ impl RetroTexApp {
         }
 
         let file_id = settings.last_opened_id;
+        let palette_manager = PaletteManager::initialize();
 
         let ret = Self {
             tmp_str: String::new(),
             tmp_id_stack: Vec::new(),
             file_registry,
+            palettes: palette_manager,
             settings,
             file_id,
             last_unsaved_change: Instant::now(),
@@ -109,9 +117,11 @@ impl RetroTexApp {
                 file_name_dialog: None,
                 file_name_dialog_just_opened: false,
                 tex_ref_dialog_pass: None,
+                palette_dialog_open: false,
                 file_name_input: String::new(),
                 rename_pending: None,
                 create_pending: None,
+                palette_textures: None,
             },
             log_overlay: LogOverlay::new(log_entries),
         };
@@ -126,6 +136,10 @@ impl RetroTexApp {
 
 impl eframe::App for RetroTexApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.ui_data.palette_textures.is_none() {
+            self.ui_data.palette_textures = Some(self.palettes.load_textures(ctx));
+        }
+
         let available_files = self.file_registry.files_sorted();
         let new_file = show_file_list_panel(ctx, &available_files, &self.file_id, &mut self.ui_data);
         let selected_new_file = if let Some(fid) = new_file {
@@ -161,14 +175,14 @@ impl eframe::App for RetroTexApp {
         let changed = {
             let (mut file, ui_data) = (file_ref.write().unwrap(), &mut self.ui_data);
             self.tmp_id_stack.clear();
-            file.update_layers(&mut self.tmp_id_stack, &self.file_registry).unwrap_or_else(|e| error!("Failed to update layers for '{}': {}", file.name(), e));
-            file.update_images(ctx, &mut self.tmp_id_stack, &self.file_registry);
+            file.update_layers(&mut self.tmp_id_stack, &self.file_registry, &self.palettes).unwrap_or_else(|e| error!("Failed to update layers for '{}': {}", file.name(), e));
+            file.update_images(ctx, &mut self.tmp_id_stack, &self.file_registry, &self.palettes);
 
-            file.modify_definition(ctx, &mut self.tmp_id_stack, &self.file_registry, | def, images, layers, name | {
+            file.modify_definition(ctx, &mut self.tmp_id_stack, &self.file_registry, &self.palettes, | def, images, layers, name | {
                 egui::SidePanel::right("right_panel")
                     .default_width(400.0)
                     .show(ctx, |ui| {
-                        def.definition_ui(ui, ui_data, name, self.file_id, &available_files, &mut self.tmp_str);
+                        def.definition_ui(ui, ui_data, name, self.file_id, &available_files, self.palettes.names(), &mut self.tmp_str);
                     });
 
                 egui::CentralPanel::default().show(ctx, |ui| {
@@ -177,7 +191,7 @@ impl eframe::App for RetroTexApp {
             })
         };
 
-        self.log_overlay.show(ctx);        
+        self.log_overlay.show(ctx);
 
         let mut file_name_changed = false;
         if let Some(new_name) = self.ui_data.rename_pending.take() {
@@ -192,8 +206,8 @@ impl eframe::App for RetroTexApp {
             let mut file = file_ref.write().unwrap();
             self.last_unsaved_change = Instant::now();
             self.tmp_id_stack.clear();
-            file.update_layers(&mut self.tmp_id_stack, &self.file_registry).unwrap_or_else(|e| error!("Failed to update layers for '{}': {}", file.name(), e));
-            file.update_images(ctx, &mut self.tmp_id_stack, &self.file_registry);
+            file.update_layers(&mut self.tmp_id_stack, &self.file_registry, &self.palettes).unwrap_or_else(|e| error!("Failed to update layers for '{}': {}", file.name(), e));
+            file.update_images(ctx, &mut self.tmp_id_stack, &self.file_registry, &self.palettes);
         }
 
         if file_ref.read().unwrap().is_dirty() || file_name_changed {

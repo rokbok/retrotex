@@ -4,6 +4,7 @@ use glam::{FloatExt, IVec2, Vec2, Vec3};
 use rayon::prelude::*;
 
 use crate::noise::gaussian;
+use crate::palettes::Palette;
 use crate::prelude::*;
 use crate::util::{RayIterator};
 use crate::{IMG_PIXEL_COUNT, definition::{AOSettings, LightingSettings}};
@@ -169,6 +170,18 @@ fn calculate_light(
     });
 }
 
+fn apply_palette(lit: &[Vec3; IMG_PIXEL_COUNT], fin: &mut Box<[Vec3; IMG_PIXEL_COUNT]>, palette: Option<&Palette>) {
+    if let Some(palette) = palette {
+        fin.par_iter_mut().enumerate().for_each(|(i, fin)| {
+            *fin = palette.sample(lit[i]);
+        });
+    } else {
+        fin.par_iter_mut().enumerate().for_each(|(i, fin)| {
+            *fin = lit[i];
+        });
+    }
+}
+
 pub struct TextureLayers {
     pub albedo: Box<[Vec3; IMG_PIXEL_COUNT]>,
     pub depth: Box<[f32; IMG_PIXEL_COUNT]>,
@@ -176,6 +189,7 @@ pub struct TextureLayers {
     pub ao: Box<[f32; IMG_PIXEL_COUNT]>,
     pub shadow: Box<[f32; IMG_PIXEL_COUNT]>,
     pub lit: Box<[Vec3; IMG_PIXEL_COUNT]>,
+    pub fin: Box<[Vec3; IMG_PIXEL_COUNT]>,
 }
 
 impl Default for TextureLayers {
@@ -187,15 +201,17 @@ impl Default for TextureLayers {
             ao: Box::new([0.0; IMG_PIXEL_COUNT]),
             shadow: Box::new([1.0; IMG_PIXEL_COUNT]),
             lit: Box::new([Vec3::ZERO; IMG_PIXEL_COUNT]),
+            fin: Box::new([Vec3::ZERO; IMG_PIXEL_COUNT]),
         }
     }
 }
 
 impl TextureLayers {
-    pub fn recalculate_derived(&mut self, ao_settings: &AOSettings, light: &LightingSettings) {
+    pub fn recalculate_derived(&mut self, ao_settings: &AOSettings, light: &LightingSettings, palette: Option<&Palette>) {
         calculate_normals(&self.depth, &mut self.normal);
         calculate_ao(&self.depth, &mut self.ao, light.light_dir_vec3(), ao_settings);
         trace_shadows(&self.depth, &mut self.shadow, light);
         calculate_light(&self.albedo, &self.normal, &self.ao, &self.shadow, &mut self.lit, light);
+        apply_palette(&self.lit, &mut self.fin, palette);
     }
 }

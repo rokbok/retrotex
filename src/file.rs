@@ -3,7 +3,7 @@ use egui::{Color32, ColorImage};
 use glam::FloatExt;
 use rayon::prelude::*;
 
-use crate::{prelude::*, storage::FileRegistry};
+use crate::{palettes::PaletteManager, prelude::*, storage::FileRegistry};
 use crate::{IMG_PIXEL_COUNT, TextureHandleSet, color::{self, Color}, definition::TextureDefinition, processing::TextureLayers};
 
 pub const DEFAULT_NAME: &str = "unnamed";
@@ -123,10 +123,11 @@ impl DefinitionFile {
         ctx: &egui::Context,
         updating: &mut Vec<FileId>,
         reg: &FileRegistry,
+        pal: &PaletteManager,
         change_fn: F
     ) -> bool {
         if self.images.is_none() {
-            self.update_images(ctx, updating, reg);
+            self.update_images(ctx, updating, reg, pal);
         }
         change_fn(&mut self.def, &self.images.as_ref().unwrap(), &self.layers, &self.name);
         let prev_hash = self.hash;
@@ -252,7 +253,7 @@ impl DefinitionFile {
         }
     }
 
-    pub fn update_layers(&mut self, updating: &mut Vec<FileId>, reg: &FileRegistry) -> Result<(), String> {
+    pub fn update_layers(&mut self, updating: &mut Vec<FileId>, reg: &FileRegistry, pal: &PaletteManager) -> Result<(), String> {
         if self.layers_hash != self.hash {
             updating.push(self.id);
                 for pass in self.def.passes.iter() {
@@ -262,7 +263,7 @@ impl DefinitionFile {
                         }
 
                         let res = reg.file_by_id(*rid)
-                            .map(|file_ref| file_ref.write().unwrap().update_layers(updating, reg));
+                            .map(|file_ref| file_ref.write().unwrap().update_layers(updating, reg, pal));
                         if let Some(r) = res {
                             r?
                         }
@@ -281,15 +282,19 @@ impl DefinitionFile {
                     
                     *depth_layer = s.depth;
                 });
-            self.layers.recalculate_derived(&self.def.ao_settings, &self.def.lighting_settings);
+            self.layers.recalculate_derived(
+                &self.def.ao_settings,
+                &self.def.lighting_settings,
+                self.def.palette.as_ref().and_then(|name| pal.get(name)),
+            );
             self.layers_hash = self.hash;
         }
         Ok(())
     }
 
-    pub(crate) fn update_images(&mut self, ctx: &egui::Context, updating: &mut Vec<FileId>, reg: &FileRegistry) -> &TextureHandleSet {
+    pub(crate) fn update_images(&mut self, ctx: &egui::Context, updating: &mut Vec<FileId>, reg: &FileRegistry, pal: &PaletteManager) -> &TextureHandleSet {
         if self.images.is_none() || self.image_hash != self.hash {
-            self.update_layers(updating, reg).unwrap_or_else(|e| error!("Failed to update layers for '{}': {}", self.name, e));
+            self.update_layers(updating, reg, pal).unwrap_or_else(|e| error!("Failed to update layers for '{}': {}", self.name, e));
 
             let mut albedo_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
             let mut depth_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], Color32::MAGENTA);
