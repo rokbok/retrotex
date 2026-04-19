@@ -19,7 +19,9 @@ const IMAGE_TEX_OPTIONS: egui::TextureOptions = egui::TextureOptions {
     mipmap_mode: None,
 };
 
-fn calculate_normals(depth: &[f32; IMG_PIXEL_COUNT], normals: &mut Box<[Vec3; IMG_PIXEL_COUNT]>) {
+fn calculate_normals(depth: &[f32], normals: &mut Box<[Vec3]>) {
+    assert!(depth.len() == IMG_PIXEL_COUNT);
+    assert!(normals.len() == IMG_PIXEL_COUNT);
     // Y points up, Unity-style
     normals.par_iter_mut().enumerate().for_each(|(i, normal)| {
         let (x, y) = idx2coords(i);
@@ -33,7 +35,9 @@ fn calculate_normals(depth: &[f32; IMG_PIXEL_COUNT], normals: &mut Box<[Vec3; IM
     });
 }
 
-fn calculate_ao(depth: &[f32; IMG_PIXEL_COUNT], ao: &mut Box<[f32; IMG_PIXEL_COUNT]>, light_dir: Vec3, settings: &AOSettings) {
+fn calculate_ao(depth: &[f32], ao: &mut Box<[f32]>, light_dir: Vec3, settings: &AOSettings) {
+    assert!(depth.len() == IMG_PIXEL_COUNT);
+    assert!(ao.len() == IMG_PIXEL_COUNT);
     let bias_dir = Vec2::new(-light_dir.x, light_dir.y).normalize_or_zero();
     let light_dir_fact = 1.0 - light_dir.z.abs();
     let bias_strength = light_dir_fact * if bias_dir.length_squared() < 0.1 { 0.0 } else { settings.bias as f32 / 100.0 };
@@ -88,7 +92,8 @@ fn calculate_ao(depth: &[f32; IMG_PIXEL_COUNT], ao: &mut Box<[f32; IMG_PIXEL_COU
     });
 }
 
-fn trace_shadow_ray(depth: &[f32; IMG_PIXEL_COUNT], start: IVec2, light_dir: Vec3, light: &LightingSettings) -> f32 {
+fn trace_shadow_ray(depth: &[f32], start: IVec2, light_dir: Vec3, light: &LightingSettings) -> f32 {
+    assert!(depth.len() == IMG_PIXEL_COUNT);
     let xy_dir = Vec2::new(-light_dir.x, light_dir.y);
     let xy_len = xy_dir.length();
     if xy_len < 0.001 {
@@ -118,7 +123,10 @@ fn trace_shadow_ray(depth: &[f32; IMG_PIXEL_COUNT], start: IVec2, light_dir: Vec
     1.0
 }
 
-fn trace_shadows(depth: &[f32; IMG_PIXEL_COUNT], shadow_raw: &mut Box<[f32; IMG_PIXEL_COUNT]>, light: &LightingSettings) {
+fn trace_shadows(depth: &[f32], shadow_raw: &mut Box<[f32]>, light: &LightingSettings) {
+    assert!(depth.len() == IMG_PIXEL_COUNT);
+    assert!(shadow_raw.len() == IMG_PIXEL_COUNT);
+
     if !light.shadows {
         shadow_raw.par_iter_mut().for_each(|s| *s = 1.0);
         return;
@@ -155,14 +163,13 @@ fn trace_shadows(depth: &[f32; IMG_PIXEL_COUNT], shadow_raw: &mut Box<[f32; IMG_
     });
 }
 
-fn calculate_light(
-    albedo: &[Vec3; IMG_PIXEL_COUNT],
-    normal: &[Vec3; IMG_PIXEL_COUNT],
-    ao: &[f32; IMG_PIXEL_COUNT],
-    shadow: &[f32; IMG_PIXEL_COUNT],
-    lit: &mut Box<[Vec3; IMG_PIXEL_COUNT]>,
-    light: &LightingSettings,
-) {
+fn calculate_light(albedo: &[Vec3], normal: &[Vec3], ao: &[f32], shadow: &[f32], lit: &mut Box<[Vec3]>, light: &LightingSettings) {
+    assert!(albedo.len() == IMG_PIXEL_COUNT);
+    assert!(normal.len() == IMG_PIXEL_COUNT);
+    assert!(ao.len() == IMG_PIXEL_COUNT);
+    assert!(shadow.len() == IMG_PIXEL_COUNT);
+    assert!(lit.len() == IMG_PIXEL_COUNT);
+
     let light_dir: Vec3 = light.light_dir_vec3();
 
     let lfact = 1.0 / light_dir.z.abs().max(0.1); // Make sure flat surface has the assigned color exactly -- within reason
@@ -179,7 +186,10 @@ fn calculate_light(
     });
 }
 
-fn apply_palette(lit: &[Vec3; IMG_PIXEL_COUNT], fin: &mut Box<[Vec3; IMG_PIXEL_COUNT]>, palette: Option<&Palette>) {
+fn apply_palette(lit: &[Vec3], fin: &mut Box<[Vec3]>, palette: Option<&Palette>) {
+    assert!(lit.len() == IMG_PIXEL_COUNT);
+    assert!(fin.len() == IMG_PIXEL_COUNT);
+
     if let Some(palette) = palette {
         // Floyd-Steinberg dithering
         for i in 0..IMG_PIXEL_COUNT {
@@ -225,24 +235,24 @@ fn apply_palette(lit: &[Vec3; IMG_PIXEL_COUNT], fin: &mut Box<[Vec3; IMG_PIXEL_C
 }
 
 pub struct TextureLayers {
-    pub albedo: Box<[Vec3; IMG_PIXEL_COUNT]>,
-    pub depth: Box<[f32; IMG_PIXEL_COUNT]>,
-    pub normal: Box<[Vec3; IMG_PIXEL_COUNT]>,
-    pub ao: Box<[f32; IMG_PIXEL_COUNT]>,
-    pub shadow: Box<[f32; IMG_PIXEL_COUNT]>,
-    pub lit: Box<[Vec3; IMG_PIXEL_COUNT]>,
-    pub fin: Box<[Vec3; IMG_PIXEL_COUNT]>,
+    pub albedo: Box<[Vec3]>,
+    pub depth: Box<[f32]>,
+    pub normal: Box<[Vec3]>,
+    pub ao: Box<[f32]>,
+    pub shadow: Box<[f32]>,
+    pub lit: Box<[Vec3]>,
+    pub fin: Box<[Vec3]>,
 }
 impl TextureLayers {
     pub fn new() -> Self {
         Self {
-            albedo: Box::new([Vec3::ZERO; IMG_PIXEL_COUNT]),
-            depth: Box::new([0.0; IMG_PIXEL_COUNT]),
-            normal: Box::new([Vec3::new(0.0, 0.0, 1.0); IMG_PIXEL_COUNT]),
-            ao: Box::new([0.0; IMG_PIXEL_COUNT]),
-            shadow: Box::new([1.0; IMG_PIXEL_COUNT]),
-            lit: Box::new([Vec3::ZERO; IMG_PIXEL_COUNT]),
-            fin: Box::new([Vec3::ZERO; IMG_PIXEL_COUNT]),
+            albedo: vec![Vec3::ZERO; IMG_PIXEL_COUNT].into_boxed_slice(),
+            depth: vec![0.0; IMG_PIXEL_COUNT].into_boxed_slice(),
+            normal: vec![Vec3::new(0.0, 0.0, 1.0); IMG_PIXEL_COUNT].into_boxed_slice(),
+            ao: vec![0.0; IMG_PIXEL_COUNT].into_boxed_slice(),
+            shadow: vec![1.0; IMG_PIXEL_COUNT].into_boxed_slice(),
+            lit: vec![Vec3::ZERO; IMG_PIXEL_COUNT].into_boxed_slice(),
+            fin: vec![Vec3::ZERO; IMG_PIXEL_COUNT].into_boxed_slice(),
         }
     }
 
@@ -303,15 +313,15 @@ impl LayerCache {
         let mut idx = 0;
         while idx < self.tmp_dep_vec.len() {
             let file_id = self.tmp_dep_vec[idx];
-            for other in &self.tmp_dep_vec[0..idx] {
+            for other in self.tmp_dep_vec[0..idx].iter() {
                 if *other == file_id {
                     return Err(format!("Circular dependency detected involving file id {}", file_id));
                 }
             }
 
-            if let Some(file) = files.file_by_id(file_id) {
-                for dep in file.read().expect("Lock poisoned").def().dependencies() {
-                    if files.file_by_id(dep).is_none() {
+            if let Some(file) = files.get(file_id) {
+                for dep in file.def().dependencies() {
+                    if files.get(dep).is_none() {
                         warn!("File with id {} depends on missing file id {}, skipping dependency", file_id, dep);
                     } else {
                         self.tmp_dep_vec.push(dep);
@@ -323,10 +333,10 @@ impl LayerCache {
             idx += 1;
         }
 
-        let needs_update = self.tmp_dep_vec.iter().any(| file_id | {
-            let file = files.file_by_id(*file_id).unwrap();
-            if let Some(entry) = self.layers.get(file_id) {
-                let hash = file.read().expect("Lock poisoned").definition_hash();
+        let needs_update = self.tmp_dep_vec.iter().copied().any(| file_id | {
+            let file = files.get(file_id).unwrap();
+            if let Some(entry) = self.layers.get(&file_id) {
+                let hash = file.definition_hash();
                 entry.hash != hash
             } else {
                 true
@@ -337,11 +347,10 @@ impl LayerCache {
             return Ok(false);
         }
 
-        for file_id in self.tmp_dep_vec.iter().rev() {
+        for file_id in self.tmp_dep_vec.iter().rev().copied() {
             // Temporarily move out of cache to free mutable borrow for recursive dependencies; will be put back at the end of this loop iteration
-            let mut dest = if let Some(entry) = self.layers.remove(file_id) { entry.layers } else { TextureLayers::new() };
-            let file = files.file_by_id(*file_id).unwrap().read().expect("Lock poisoned");
-
+            let mut dest = if let Some(entry) = self.layers.remove(&file_id) { entry.layers } else { TextureLayers::new() };
+            let file = files.get(file_id).unwrap();
             debug!("Regenerating layers for texture '{}'", file.name());
             let def = file.def();
             dest.albedo.par_iter_mut()
@@ -359,8 +368,8 @@ impl LayerCache {
                 def.palette.as_ref().and_then(|name| pal.get(name)),
             );
 
-            self.layers.insert(*file_id, LayerCacheEntry { layers: dest, hash: file.definition_hash() });
-            if let Some(image_entry) = self.images.get_mut(file_id) {
+            self.layers.insert(file_id, LayerCacheEntry { layers: dest, hash: file.definition_hash() });
+            if let Some(image_entry) = self.images.get_mut(&file_id) {
                 image_entry.dirty = true;
             }
         }

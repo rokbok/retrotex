@@ -94,7 +94,7 @@ impl RetroTexApp {
         let mut file_registry = FileRegistry::read();
         let mut settings = Settings::load();
         let saved_file_id = settings.last_opened_id;
-        if !file_registry.file_by_id(saved_file_id).is_some() {
+        if !file_registry.get(saved_file_id).is_some() {
             let id = file_registry
                 .id_by_name(file::DEFAULT_NAME)
                 .unwrap_or_else(|| file_registry.create(file::DEFAULT_NAME, TextureDefinition::demo()));
@@ -152,10 +152,6 @@ impl eframe::App for RetroTexApp {
             false
         };
 
-        let file_ref = self.file_registry
-            .file_by_id(self.file_id)
-            .expect("Active file id not found in registry");
-
         if selected_new_file {
             // If the new file references the previously active file (or anthing referenced by it), it's possible that we update that reference. This won't invalidate
             // the newly selected file's layers by itself. So on file switch we just always invalidate to force a refresh.
@@ -167,22 +163,23 @@ impl eframe::App for RetroTexApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             if i.key_pressed(egui::Key::Z) && i.modifiers.ctrl {
-                file_ref.write().unwrap().undo();
+                self.file_registry.get_mut(self.file_id).unwrap().undo();
             }
             if i.key_pressed(egui::Key::Y) && i.modifiers.ctrl {
-                file_ref.write().unwrap().redo();
+                self.file_registry.get_mut(self.file_id).unwrap().redo();
             }
             i.viewport().close_requested()
         });
 
         ctx.set_pixels_per_point(1.5);
 
-        let changed = {
-            let file = self.file_registry.file_by_id(self.file_id).expect("Active file id not found in registry");
-            self.layers.update_layers_for(self.file_id, &self.file_registry, &self.palettes).map(|_| ()).unwrap_or_else(|e| error!("Failed to update layers for '{}': {}", file.read().unwrap().name(), e));
-            self.layers.update_images_for(self.file_id, ctx).map(|_| ()).unwrap_or_else(|e| error!("Failed to update images for '{}': {}", file.read().unwrap().name(), e));
 
-            file.write().expect("Lock poisoned").modify_definition(| def, name | {
+        let changed = {
+            self.layers.update_layers_for(self.file_id, &self.file_registry, &self.palettes).map(|_| ()).unwrap_or_else(|e| error!("Failed to update layers for '{}': {}", self.file_registry.get(self.file_id).unwrap().name(), e));
+            self.layers.update_images_for(self.file_id, ctx).map(|_| ()).unwrap_or_else(|e| error!("Failed to update images for '{}': {}", self.file_registry.get(self.file_id).unwrap().name(), e));
+
+            let file = self.file_registry.get_mut(self.file_id).expect("Active file id not found in registry");
+            file.modify_definition(| def, name | {
                 egui::SidePanel::right("right_panel")
                     .default_width(400.0)
                     .show(ctx, |ui| {
@@ -199,7 +196,7 @@ impl eframe::App for RetroTexApp {
 
         let mut file_name_changed = false;
         if let Some(new_name) = self.ui_data.rename_pending.take() {
-            if let Err(e) = file_ref.write().unwrap().rename(&new_name) {
+            if let Err(e) = self.file_registry.get_mut(self.file_id).unwrap().rename(&new_name) {
                 error!("Failed to rename file: {}", e);
             } else {
                 file_name_changed = true;
@@ -211,10 +208,10 @@ impl eframe::App for RetroTexApp {
             ctx.request_repaint(); // Keep updating until we save
         }
 
-        if file_ref.read().unwrap().is_dirty() || file_name_changed {
-            let mut file = file_ref.write().unwrap();
+        if self.file_registry.get(self.file_id).unwrap().is_dirty() || file_name_changed {
             ctx.request_repaint(); // Keep updating until we save
             if closing || self.last_unsaved_change.elapsed().as_millis() >= AUTO_SAVE_DELAY_MILLIS as u128 {
+                let file = self.file_registry.get_mut(self.file_id).unwrap();
                 file.save().unwrap_or_else(|e| error!("Failed to save texture {}: {}", file.name(), e));
                 file.write_images(&self.output_dir, &self.layers).unwrap_or_else(|e| error!("Failed to write images for texture {}: {}", file.name(), e));
                 assert!(!file.is_dirty(), "File should not be dirty after saving");
@@ -229,8 +226,7 @@ impl eframe::App for RetroTexApp {
                 error!("Cannot create file: a file named '{}' already exists", trimmed_name);
             } else {
                 let id = self.file_registry.create(trimmed_name, TextureDefinition::demo());
-                if let Some(created_file) = self.file_registry.file_by_id(id) {
-                    let mut created_file = created_file.write().unwrap();
+                if let Some(created_file) = self.file_registry.get_mut(id) {
                     if let Err(e) = created_file.save() {
                         error!("Failed to create file '{}': {}", trimmed_name, e);
                     }
