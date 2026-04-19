@@ -1,14 +1,23 @@
 use std::iter::zip;
 
+use egui::ColorImage;
+use egui::ahash::HashMap;
 use glam::{FloatExt, IVec2, Vec2, Vec3};
 use rayon::prelude::*;
 
 use crate::noise::gaussian;
-use crate::palettes::Palette;
-use crate::prelude::*;
+use crate::palettes::{Palette, PaletteManager};
+use crate::{TextureHandleSet, color, prelude::*};
+use crate::storage::FileRegistry;
 use crate::util::{RayIterator};
 use crate::{IMG_PIXEL_COUNT, definition::{AOSettings, LightingSettings}};
 
+const IMAGE_TEX_OPTIONS: egui::TextureOptions = egui::TextureOptions {
+    magnification: egui::TextureFilter::Nearest,
+    minification: egui::TextureFilter::Nearest,
+    wrap_mode: egui::TextureWrapMode::ClampToEdge,
+    mipmap_mode: None,
+};
 
 fn calculate_normals(depth: &[f32; IMG_PIXEL_COUNT], normals: &mut Box<[Vec3; IMG_PIXEL_COUNT]>) {
     // Y points up, Unity-style
@@ -224,9 +233,8 @@ pub struct TextureLayers {
     pub lit: Box<[Vec3; IMG_PIXEL_COUNT]>,
     pub fin: Box<[Vec3; IMG_PIXEL_COUNT]>,
 }
-
-impl Default for TextureLayers {
-    fn default() -> Self {
+impl TextureLayers {
+    pub fn new() -> Self {
         Self {
             albedo: Box::new([Vec3::ZERO; IMG_PIXEL_COUNT]),
             depth: Box::new([0.0; IMG_PIXEL_COUNT]),
@@ -237,14 +245,199 @@ impl Default for TextureLayers {
             fin: Box::new([Vec3::ZERO; IMG_PIXEL_COUNT]),
         }
     }
-}
 
-impl TextureLayers {
     pub fn recalculate_derived(&mut self, ao_settings: &AOSettings, light: &LightingSettings, palette: Option<&Palette>) {
         calculate_normals(&self.depth, &mut self.normal);
         calculate_ao(&self.depth, &mut self.ao, light.light_dir_vec3(), ao_settings);
         trace_shadows(&self.depth, &mut self.shadow, light);
         calculate_light(&self.albedo, &self.normal, &self.ao, &self.shadow, &mut self.lit, light);
         apply_palette(&self.lit, &mut self.fin, palette);
+    }
+}
+
+struct LayerCacheEntry {
+    layers: TextureLayers,
+    hash: u64,
+}
+
+struct ImageCacheEntry {
+    tex: TextureHandleSet,
+    dirty: bool,
+}
+
+pub struct LayerCache {
+    layers: HashMap<FileId, LayerCacheEntry>,
+    images: HashMap<FileId, ImageCacheEntry>,
+    tmp_dep_vec: Vec<FileId>,
+}
+
+impl LayerCache {
+    pub fn new() -> Self {
+        Self {
+            layers: HashMap::default(),
+            images: HashMap::default(),
+            tmp_dep_vec: Vec::new(),
+        }
+    }
+
+    pub fn get_layers(&self, file_id: FileId) -> Option<&TextureLayers> {
+        self.layers.get(&file_id).map(| entry | &entry.layers)
+    }
+
+    pub(crate) fn get_images(&self, file_id: FileId) -> Option<&TextureHandleSet> {
+        self.images.get(&file_id).map(| entry | &entry.tex)
+    }
+
+    pub fn invalidate(&mut self, file_id: FileId) {
+        if let Some(entry) = self.layers.get_mut(&file_id) {
+            entry.hash = 0;
+        }
+        if let Some(image_entry) = self.images.get_mut(&file_id) {
+            image_entry.dirty = true;
+        }
+    }
+    
+    pub fn update_layers_for(&mut self, id: FileId, files: &FileRegistry, pal: &PaletteManager) -> Result<bool, String> {
+        self.tmp_dep_vec.clear();
+        self.tmp_dep_vec.push(id);
+        let mut idx = 0;
+        while idx < self.tmp_dep_vec.len() {
+            let file_id = self.tmp_dep_vec[idx];
+            for other in &self.tmp_dep_vec[0..idx] {
+                if *other == file_id {
+                    return Err(format!("Circular dependency detected involving file id {}", file_id));
+                }
+            }
+
+            if let Some(file) = files.file_by_id(file_id) {
+                for dep in file.read().expect("Lock poisoned").def().dependencies() {
+                    if files.file_by_id(dep).is_none() {
+                        warn!("File with id {} depends on missing file id {}, skipping dependency", file_id, dep);
+                    } else {
+                        self.tmp_dep_vec.push(dep);
+                    }
+                }
+            } else {
+                return Err(format!("File with id {} not found in registry", file_id));
+            }
+            idx += 1;
+        }
+
+        let needs_update = self.tmp_dep_vec.iter().any(| file_id | {
+            let file = files.file_by_id(*file_id).unwrap();
+            if let Some(entry) = self.layers.get(file_id) {
+                let hash = file.read().expect("Lock poisoned").definition_hash();
+                entry.hash != hash
+            } else {
+                true
+            }
+        });
+
+        if !needs_update {
+            return Ok(false);
+        }
+
+        for file_id in self.tmp_dep_vec.iter().rev() {
+            // Temporarily move out of cache to free mutable borrow for recursive dependencies; will be put back at the end of this loop iteration
+            let mut dest = if let Some(entry) = self.layers.remove(file_id) { entry.layers } else { TextureLayers::new() };
+            let file = files.file_by_id(*file_id).unwrap().read().expect("Lock poisoned");
+
+            debug!("Regenerating layers for texture '{}'", file.name());
+            let def = file.def();
+            dest.albedo.par_iter_mut()
+                .zip(dest.depth.par_iter_mut())
+                .enumerate()
+                .for_each(|(i, (albedo_layer, depth_layer))| {
+                    let (x, y) = idx2coords(i);
+                    let s = def.generate_pixel(x, y, &self);
+                    *albedo_layer = s.albedo;    
+                    *depth_layer = s.depth;
+                });
+            dest.recalculate_derived(
+                &def.ao_settings,
+                &def.lighting_settings,
+                def.palette.as_ref().and_then(|name| pal.get(name)),
+            );
+
+            self.layers.insert(*file_id, LayerCacheEntry { layers: dest, hash: file.definition_hash() });
+            if let Some(image_entry) = self.images.get_mut(file_id) {
+                image_entry.dirty = true;
+            }
+        }
+        Ok(true)
+    }
+
+    pub fn update_images_for(&mut self, file_id: FileId, ctx: &egui::Context) -> Result<bool, String> {
+        if let Some(image_entry) = self.images.get_mut(&file_id) {
+            if !image_entry.dirty {
+                return Ok(false);
+            }
+        }
+
+        debug!("Updating images for file id {}", file_id);
+
+        let mut albedo_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], egui::Color32::MAGENTA);
+        let mut depth_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], egui::Color32::MAGENTA);
+        let mut normal_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], egui::Color32::MAGENTA);
+        let mut ao_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], egui::Color32::MAGENTA);
+        let mut lit_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], egui::Color32::MAGENTA);
+        let mut fin_img = ColorImage::filled([IMG_SIZE as usize, IMG_SIZE as usize], egui::Color32::MAGENTA);
+
+        let layers = if let Some(entry) = self.layers.get(&file_id) {
+            &entry.layers
+        } else {
+            return Err(format!("Cannot update images for file id {} because layers are missing", file_id));
+        };
+
+        albedo_img.pixels.par_iter_mut()
+            .zip(depth_img.pixels.par_iter_mut())
+            .zip(normal_img.pixels.par_iter_mut())
+            .zip(ao_img.pixels.par_iter_mut())
+            .zip(lit_img.pixels.par_iter_mut())
+            .zip(fin_img.pixels.par_iter_mut())
+            .enumerate()
+            .for_each(|(index, (((((albedo_px, depth_px), normal_px), ao_px), lit_px), fin_px))| {
+                let a = layers.albedo[index];
+                *albedo_px = color::Color::from_linear(a.extend(1.0)).into();
+                
+                let d = (layers.depth[index] + 128.0).round().clamp(0.0, 255.0) as u8;
+                *depth_px = egui::Rgba::from_srgba_unmultiplied(d, d, d, 255).into();
+
+                let n = layers.normal[index];
+                *normal_px = egui::Rgba::from_rgba_unmultiplied(n.x.mul_add(0.5, 0.5).saturate(), n.y.mul_add(0.5, 0.5).saturate(), n.z.saturate(), 1.0).into();
+
+                let ao = layers.ao[index];
+                *ao_px = egui::Rgba::from_srgba_unmultiplied((ao * 255.0) as u8, (ao * 255.0) as u8, (ao * 255.0) as u8, 255).into();
+
+                let lit = layers.lit[index];
+                *lit_px = color::Color::from_linear(lit.extend(1.0)).into();
+
+                let fin = layers.fin[index];
+                *fin_px = color::Color::from_linear(fin.extend(1.0)).into();
+            });
+
+        if let Some(entry) = self.images.get_mut(&file_id) {
+            entry.tex.albedo.set(albedo_img, IMAGE_TEX_OPTIONS);
+            entry.tex.depth.set(depth_img, IMAGE_TEX_OPTIONS);
+            entry.tex.normal.set(normal_img, IMAGE_TEX_OPTIONS);
+            entry.tex.ao.set(ao_img, IMAGE_TEX_OPTIONS);
+            entry.tex.lit.set(lit_img, IMAGE_TEX_OPTIONS);
+            entry.tex.fin.set(fin_img, IMAGE_TEX_OPTIONS);
+            entry.dirty = false;
+        } else {
+            self.images.insert(file_id, ImageCacheEntry {
+                tex: TextureHandleSet {
+                    albedo: ctx.load_texture(format!("preview_albedo_{}", file_id), albedo_img, IMAGE_TEX_OPTIONS),
+                    depth: ctx.load_texture(format!("preview_depth_{}", file_id), depth_img, IMAGE_TEX_OPTIONS),
+                    normal: ctx.load_texture(format!("preview_normal_{}", file_id), normal_img, IMAGE_TEX_OPTIONS),
+                    ao: ctx.load_texture(format!("preview_ao_{}", file_id), ao_img, IMAGE_TEX_OPTIONS),
+                    lit: ctx.load_texture(format!("preview_lit_{}", file_id), lit_img, IMAGE_TEX_OPTIONS),
+                    fin: ctx.load_texture(format!("preview_fin_{}", file_id), fin_img, IMAGE_TEX_OPTIONS),
+                },
+                dirty: false,
+            });
+        }
+
+        Ok(true)
     }
 }

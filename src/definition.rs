@@ -4,7 +4,7 @@ use glam::{FloatExt, IVec3, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr, EnumCount, EnumIter, EnumString, VariantNames};
 
-use crate::{file::FileId, prelude::*, storage::FileRegistry};
+use crate::{file::FileId, prelude::*, processing::LayerCache};
 
 use crate::{color::{Color, EditableColor}, noise::{self, gaussian}, util};
 
@@ -508,7 +508,7 @@ impl TexturePass {
         }
     }
     
-    fn apply(&self, dest: &mut Vec3, dest_d: &mut f32, x: i32, y: i32, reg: &FileRegistry) {
+    fn apply(&self, dest: &mut Vec3, dest_d: &mut f32, x: i32, y: i32, layers: &LayerCache) {
         let mut gen_x = x;
         let mut gen_y = y;
         let mut tile_x = 0;
@@ -556,9 +556,10 @@ impl TexturePass {
 
         let mut src = self.color.color().to_linear();
         self.tex_ref
-            .and_then(| id | reg.file_by_id(id))
-            .map(| file | file.read().unwrap().get_layers().lit[idx(x, y)] )
+            .and_then(| id | layers.get_layers(id))
+            .map(| l | l.lit[idx(x, y)] )
             .map(| col | src *= col.extend(1.0) );
+
         // We don't want noise to "continue" across tiles
         let seed = self.noise.seed ^ (tile_x as u32).wrapping_mul(0x1f1f1f1f) ^ (tile_y as u32).wrapping_mul(0x1e1e1e1e);
         match self.noise.mode {
@@ -660,6 +661,26 @@ pub struct GeneratedSample {
     pub depth: f32,
 }
 
+pub struct DependencyIterator<'a> {
+    nxt: usize,
+    def: &'a TextureDefinition,
+}
+
+impl Iterator for DependencyIterator<'_> {
+    type Item = FileId;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.nxt < self.def.passes.len() {
+            let pass = &self.def.passes[self.nxt];
+            self.nxt += 1;
+            if let Some(id) = pass.tex_ref {
+                return Some(id);
+            }
+        }
+        None
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 #[serde(default)]
 pub struct TextureDefinition {
@@ -671,6 +692,10 @@ pub struct TextureDefinition {
 
 impl TextureDefinition {
     pub const VERSION: u32 = 1;
+
+    pub fn dependencies(&self) -> impl Iterator<Item = FileId> + '_ {
+        DependencyIterator { nxt: 0, def: self }
+    }
 
     pub fn demo() -> Self {
         Self {
@@ -780,14 +805,14 @@ impl TextureDefinition {
         }
     }
 
-    pub fn generate_pixel(&self, x: i32, y: i32, reg: &FileRegistry) -> GeneratedSample {
+    pub fn generate_pixel(&self, x: i32, y: i32, layers: &LayerCache) -> GeneratedSample {
         let mut ret = GeneratedSample {
             albedo: Vec3::ZERO,
             depth: 0.0,
         };
         for pass in &self.passes{
             if pass.enabled {
-                pass.apply(&mut ret.albedo, &mut ret.depth, x, y, reg);
+                pass.apply(&mut ret.albedo, &mut ret.depth, x, y, layers);
             }
         }
         ret

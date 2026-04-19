@@ -11,6 +11,7 @@ use crate::prelude::*;
 use crate::file_ui::show_file_list_panel;
 use crate::logs::{LogQueue, LogOverlay};
 use crate::palettes::PaletteManager;
+use crate::processing::LayerCache;
 use crate::settings::Settings;
 use crate::storage::FileRegistry;
 use crate::{definition::TextureDefinition, preview_ui::OngoingDrag};
@@ -77,7 +78,6 @@ pub(crate) struct UiData {
 
 struct RetroTexApp {
     tmp_str: String,
-    tmp_id_stack: Vec<FileId>,
     file_registry: FileRegistry,
     palettes: PaletteManager,
     settings: Settings,
@@ -86,6 +86,7 @@ struct RetroTexApp {
     output_dir: String,
     ui_data: UiData,
     log_overlay: LogOverlay,
+    layers: LayerCache,
 }
 
 impl RetroTexApp {
@@ -105,8 +106,8 @@ impl RetroTexApp {
 
         let ret = Self {
             tmp_str: String::new(),
-            tmp_id_stack: Vec::new(),
             file_registry,
+            layers: LayerCache::new(),
             palettes: palette_manager,
             settings,
             file_id,
@@ -156,7 +157,9 @@ impl eframe::App for RetroTexApp {
             .expect("Active file id not found in registry");
 
         if selected_new_file {
-            file_ref.write().unwrap().invalidate_images();
+            // If the new file references the previously active file (or anthing referenced by it), it's possible that we update that reference. This won't invalidate
+            // the newly selected file's layers by itself. So on file switch we just always invalidate to force a refresh.
+            self.layers.invalidate(self.file_id);
         }
 
         let closing = ctx.input(|i| {
@@ -175,20 +178,19 @@ impl eframe::App for RetroTexApp {
         ctx.set_pixels_per_point(1.5);
 
         let changed = {
-            let (mut file, ui_data) = (file_ref.write().unwrap(), &mut self.ui_data);
-            self.tmp_id_stack.clear();
-            file.update_layers(&mut self.tmp_id_stack, &self.file_registry, &self.palettes).unwrap_or_else(|e| error!("Failed to update layers for '{}': {}", file.name(), e));
-            file.update_images(ctx, &mut self.tmp_id_stack, &self.file_registry, &self.palettes);
+            let file = self.file_registry.file_by_id(self.file_id).expect("Active file id not found in registry");
+            self.layers.update_layers_for(self.file_id, &self.file_registry, &self.palettes).map(|_| ()).unwrap_or_else(|e| error!("Failed to update layers for '{}': {}", file.read().unwrap().name(), e));
+            self.layers.update_images_for(self.file_id, ctx).map(|_| ()).unwrap_or_else(|e| error!("Failed to update images for '{}': {}", file.read().unwrap().name(), e));
 
-            file.modify_definition(ctx, &mut self.tmp_id_stack, &self.file_registry, &self.palettes, | def, images, layers, name | {
+            file.write().expect("Lock poisoned").modify_definition(| def, name | {
                 egui::SidePanel::right("right_panel")
                     .default_width(400.0)
                     .show(ctx, |ui| {
-                        def.definition_ui(ui, ui_data, name, self.file_id, &available_files, self.palettes.names(), &mut self.tmp_str);
+                        def.definition_ui(ui, &mut self.ui_data, name, self.file_id, &available_files, self.palettes.names(), &mut self.tmp_str);
                     });
 
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    def.add_preview(ui, ui_data, images, layers, &mut self.tmp_str);
+                    def.add_preview(ui, &mut self.ui_data, self.layers.get_images(self.file_id).expect("Missing image cache entry"),self.layers.get_layers(self.file_id).expect("Missing layer cache entry"), &mut self.tmp_str);
                 });
             })
         };
@@ -205,11 +207,8 @@ impl eframe::App for RetroTexApp {
         }
 
         if changed {
-            let mut file = file_ref.write().unwrap();
             self.last_unsaved_change = Instant::now();
-            self.tmp_id_stack.clear();
-            file.update_layers(&mut self.tmp_id_stack, &self.file_registry, &self.palettes).unwrap_or_else(|e| error!("Failed to update layers for '{}': {}", file.name(), e));
-            file.update_images(ctx, &mut self.tmp_id_stack, &self.file_registry, &self.palettes);
+            ctx.request_repaint(); // Keep updating until we save
         }
 
         if file_ref.read().unwrap().is_dirty() || file_name_changed {
@@ -217,7 +216,7 @@ impl eframe::App for RetroTexApp {
             ctx.request_repaint(); // Keep updating until we save
             if closing || self.last_unsaved_change.elapsed().as_millis() >= AUTO_SAVE_DELAY_MILLIS as u128 {
                 file.save().unwrap_or_else(|e| error!("Failed to save texture {}: {}", file.name(), e));
-                file.write_images(&self.output_dir).unwrap_or_else(|e| error!("Failed to write images for texture {}: {}", file.name(), e));
+                file.write_images(&self.output_dir, &self.layers).unwrap_or_else(|e| error!("Failed to write images for texture {}: {}", file.name(), e));
                 assert!(!file.is_dirty(), "File should not be dirty after saving");
             }
         }
@@ -235,7 +234,7 @@ impl eframe::App for RetroTexApp {
                     if let Err(e) = created_file.save() {
                         error!("Failed to create file '{}': {}", trimmed_name, e);
                     }
-                    if let Err(e) = created_file.write_images(&self.output_dir) {
+                    if let Err(e) = created_file.write_images(&self.output_dir, &self.layers) {
                         error!("Failed to write images for new texture '{}': {}", trimmed_name, e);
                     }
                 }
